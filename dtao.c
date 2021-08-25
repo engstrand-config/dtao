@@ -14,6 +14,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <wayland-client.h>
+#include <linux/input.h>
 #include "utf8.h"
 #include "wlr-layer-shell-unstable-v1-protocol.h"
 #include "xdg-shell-protocol.h"
@@ -34,6 +35,8 @@
 
 /* Includes the newline character */
 #define MAX_LINE_LEN 8192
+#define MAX_CLICKABLE_AREAS 64
+#define MAX_CLICKABLE_AREA_CMD_LEN 128
 
 enum align { ALIGN_C, ALIGN_L, ALIGN_R };
 
@@ -42,9 +45,12 @@ static struct wl_compositor *compositor;
 static struct wl_shm *shm;
 static struct zwlr_layer_shell_v1 *layer_shell;
 
+struct wl_seat *seat = NULL;
+
 static struct zwlr_layer_surface_v1 *layer_surface;
 static struct wl_output *wl_output;
 static struct wl_surface *wl_surface;
+static struct wl_surface *active_wl_surface;
 
 static int32_t output = -1;
 
@@ -59,6 +65,23 @@ static bool expand;
 static bool run_display = true;
 
 static uint32_t savedx = 0;
+
+static uint32_t mousex = 0;
+static uint32_t mousey = 0;
+
+static struct ca_entry {
+	uint32_t from_x;
+	uint32_t to_x;
+	uint32_t from_y;
+	uint32_t to_y;
+	uint32_t mouse_button;
+	char cmd[MAX_CLICKABLE_AREA_CMD_LEN];
+} ca_entry_creating;
+
+static uint32_t ca_entry_count = 0;
+static struct ca_entry ca_entries[MAX_CLICKABLE_AREAS];
+
+static bool ca_waiting = false;
 
 static struct fcft_font *font;
 static char line[MAX_LINE_LEN];
@@ -203,6 +226,67 @@ parse_movement (char *str, uint32_t *xpos, uint32_t *ypos, uint32_t xoffset, uin
 
 }
 
+static int
+parse_clickable_area (char *str, uint32_t *xpos, uint32_t *ypos)
+{
+	if (ca_waiting) {
+		if(*str) {
+			fprintf(stderr, "Second clickable area command must have 0 arguments\n");
+			return 1;
+		}
+
+		ca_entry_creating.to_x = *xpos;
+		ca_entry_creating.to_y = *ypos;
+
+		if(ca_entry_creating.to_x < ca_entry_creating.from_x) {
+			uint32_t temp = ca_entry_creating.to_x;
+			ca_entry_creating.to_x = ca_entry_creating.from_x;
+			ca_entry_creating.from_x = temp;
+		}
+		if(ca_entry_creating.to_y < ca_entry_creating.from_y) {
+			uint32_t temp = ca_entry_creating.to_y;
+			ca_entry_creating.to_y = ca_entry_creating.from_y;
+			ca_entry_creating.from_y = temp;
+		}
+
+		ca_entry_creating.from_y -= font->ascent;
+
+		memcpy(&ca_entries[ca_entry_count++], &ca_entry_creating, sizeof(struct ca_entry));
+
+		ca_waiting = false;
+	} else {
+		if (!*str) {
+			fprintf(stderr, "Second clickable area command must have 2 arguments (0 provided)\n");
+			return 1;
+		}
+		int mouse_button = *str - '0';
+		if(mouse_button < 0 || mouse_button > 9) {
+			fprintf(stderr, "Invalid mouse button: %d", mouse_button);
+			return 1;
+		}
+		str++;
+		if (*str != ',') {
+			fprintf(stderr, "First clickable area command must have 2 arguments (1 provided)\n");
+			return 1;
+		}
+	    	char *cmd = ++str;
+		if (strlen(cmd) > MAX_CLICKABLE_AREA_CMD_LEN) {
+			fprintf(stderr, "Clickable area command exceeds maximum length (%d)\n", MAX_CLICKABLE_AREA_CMD_LEN);
+			return 1;
+		}
+
+		ca_entry_creating.from_x = *xpos;
+		ca_entry_creating.from_y = *ypos;
+		ca_entry_creating.to_x = 0;
+		ca_entry_creating.to_y = 0;
+
+		strcpy(ca_entry_creating.cmd, cmd);
+		ca_waiting = true;
+	}
+
+	return 0;
+}
+
 static char *
 handle_cmd(char *cmd, pixman_color_t *bg, pixman_color_t *fg, uint32_t *xpos, uint32_t *ypos)
 {
@@ -236,6 +320,9 @@ handle_cmd(char *cmd, pixman_color_t *bg, pixman_color_t *fg, uint32_t *xpos, ui
 		savedx = *xpos;
 	} else if (!strcmp(cmd, "rx")) {
 		*xpos = savedx;
+	} else if (!strcmp(cmd, "ca")) {
+		if (parse_clickable_area (arg, xpos, ypos))
+			fprintf(stderr, "Invalid clickable area command argument \"%s\"\n", arg);
 	} else {
 		fprintf(stderr, "Unrecognized command \"%s\"\n", cmd);
 	}
@@ -288,9 +375,11 @@ draw_frame(char *text)
 
 	pixman_image_t *fgfill = pixman_image_create_solid_fill(&textfgcolor);
 
-	/* Start drawing at center-left (ypos sets the text baseline) */
+	/* start drawing at center-left (ypos sets the text baseline) */
 	uint32_t xpos = 0, maxxpos = 0;
 	uint32_t ypos = (height + font->ascent - font->descent) / 2;
+
+	ca_entry_count = 0;
 
 	uint32_t codepoint, lastcp = 0, state = UTF8_ACCEPT;
 	for (char *p = text; *p; p++) {
@@ -298,7 +387,7 @@ draw_frame(char *text)
 		if (state == UTF8_ACCEPT && *p == '^') {
 			p++;
 			if (*p != '^') {
-                                p = handle_cmd(p, &textbgcolor, &textfgcolor, &xpos, &ypos);
+				p = handle_cmd(p, &textbgcolor, &textfgcolor, &xpos, &ypos);
 				pixman_image_unref(fgfill);
 				fgfill = pixman_image_create_solid_fill(&textfgcolor);
 				continue;
@@ -424,6 +513,84 @@ static struct zwlr_layer_surface_v1_listener layer_surface_listener = {
 };
 
 static void
+pointer_handle_enter(void *data, struct wl_pointer *pointer,
+		uint32_t serial, struct wl_surface *surface,
+		wl_fixed_t sx, wl_fixed_t sy)
+{
+	active_wl_surface = surface;
+}
+
+static void
+pointer_handle_leave(void *data, struct wl_pointer *pointer,
+		uint32_t serial, struct wl_surface *surface)
+{
+	active_wl_surface = NULL;
+}
+
+static void
+pointer_handle_motion(void *data, struct wl_pointer *pointer,
+		uint32_t time, wl_fixed_t sx, wl_fixed_t sy)
+{
+	mousex = (uint32_t)wl_fixed_to_int(sx);
+	mousey = (uint32_t)wl_fixed_to_int(sy);
+}
+
+static void
+pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
+		uint32_t serial, uint32_t time, uint32_t button,
+		uint32_t state)
+{
+	if(active_wl_surface == wl_surface && state) {
+		for(uint32_t i=0; i < ca_entry_count; i++) {
+			struct ca_entry entry = ca_entries[i];
+			if(entry.mouse_button == button - BTN_LEFT &&
+					entry.from_x <= mousex && mousex <= entry.to_x &&
+					entry.from_y <= mousey && mousey <= entry.to_y) {
+				FILE *script;
+				script = popen(entry.cmd, "r");
+				if (script != NULL) {
+					while (1) {
+						char *line;
+						char buf[MAX_LINE_LEN];
+						line = fgets(buf, sizeof(buf), script);
+						if (line == NULL) break;
+					}
+				}
+				pclose(script);
+			}
+		}
+	}
+}
+
+static void
+pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
+		uint32_t time, uint32_t axis, wl_fixed_t value)
+{
+}
+
+static const struct wl_pointer_listener pointer_listener = {
+	pointer_handle_enter,
+	pointer_handle_leave,
+	pointer_handle_motion,
+	pointer_handle_button,
+	pointer_handle_axis,
+};
+
+static void
+seat_handle_capabilities(void *data, struct wl_seat *seat,
+		enum wl_seat_capability caps)
+{
+	if (caps & WL_SEAT_CAPABILITY_POINTER) {
+		struct wl_pointer *pointer = wl_seat_get_pointer(seat);
+		wl_pointer_add_listener(pointer, &pointer_listener, NULL);
+	}
+}
+
+static const struct wl_seat_listener seat_listener = {
+	seat_handle_capabilities,
+};
+
+static void
 handle_global(void *data, struct wl_registry *registry,
 		uint32_t name, const char *interface, uint32_t version)
 {
@@ -440,6 +607,10 @@ handle_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
 		layer_shell = wl_registry_bind(registry, name,
 				&zwlr_layer_shell_v1_interface, 1);
+	} else if (strcmp(interface, wl_seat_interface.name) == 0) {
+    		seat = wl_registry_bind(registry, name,
+					&wl_seat_interface, 1);
+		wl_seat_add_listener(seat, &seat_listener, NULL);
 	}
 }
 
@@ -671,6 +842,7 @@ main(int argc, char **argv)
 
 	zwlr_layer_surface_v1_set_size(layer_surface, width, height);
 	zwlr_layer_surface_v1_set_anchor(layer_surface, anchor);
+
 	wl_surface_commit(wl_surface);
 	wl_display_roundtrip(display);
 
