@@ -42,11 +42,13 @@
 enum align { ALIGN_C, ALIGN_L, ALIGN_R };
 
 typedef struct {
+        uint32_t *data;
         uint32_t width, stride, bufsize;
         struct wl_output *wl_output;
         struct wl_surface *wl_surface;
         struct wl_buffer *wl_buffer;
         struct zwlr_layer_surface_v1 *layer_surface;
+        pixman_image_t *bar;
 } Monitor;
 
 static struct wl_display *display;
@@ -61,9 +63,7 @@ static Monitor monitors[MAX_OUTPUT_MONITORS];
 
 static int32_t output = -1;
 
-static uint32_t height, titlewidth;
 static Monitor *m;
-static Monitor *selmon;
 static int lines;
 static int persist;
 static int nummons = 0;
@@ -72,6 +72,8 @@ static int exclusive_zone = -1;
 static enum align titlealign, subalign;
 static bool expand;
 static bool run_display = true;
+static uint32_t height, titlewidth;
+static uint32_t maxlayerwidth = 0;
 
 static uint32_t savedx = 0;
 static uint32_t mousex = 0;
@@ -346,56 +348,63 @@ handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
 	return end;
 }
 
-static struct wl_buffer *
-draw_frame(char *text, Monitor *m)
+static void
+draw_frame(char *text)
 {
-	/* Allocate buffer to be attached to the surface */
-	int fd = allocate_shm_file(m->bufsize);
-	if (fd == -1)
-		return NULL;
+        /* Reset monitor buffers */
+        for (int i = 0; i < nummons; i++)
+                monitors[i].wl_buffer = NULL;
 
-	uint32_t *data = mmap(NULL, m->bufsize,
-			PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	if (data == MAP_FAILED) {
-		close(fd);
-                printf("could not allocate: %d, %d\n", errno, m->bufsize);
-		return NULL;
-	}
+        /* Colors (premultiplied!) */
+        pixman_color_t textbgcolor = bgcolor;
+        pixman_color_t textfgcolor = fgcolor;
 
-	struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, m->bufsize);
-	struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0,
-			m->width, height, m->stride, WL_SHM_FORMAT_ARGB8888);
-	wl_buffer_add_listener(buffer, &wl_buffer_listener, NULL);
-	wl_shm_pool_destroy(pool);
-	close(fd);
+        for (int i = 0; i < nummons; i++) {
+                m = &monitors[i];
 
-	/* Colors (premultiplied!) */
-	pixman_color_t textbgcolor = bgcolor;
-	pixman_color_t textfgcolor = fgcolor;
+                /* Allocate buffer to be attached to the surface */
+                int fd = allocate_shm_file(m->bufsize);
+                if (fd == -1)
+		        return;
+                m->data = mmap(NULL, m->bufsize,
+                                PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+                if (m->data == MAP_FAILED) {
+                        close(fd);
+                        printf("could not allocate: %d, %d\n", errno, m->bufsize);
+                        return;
+                }
 
-	/* Pixman image corresponding to main buffer */
-	pixman_image_t *bar = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-			m->width, height, data, m->width * 4);
-	/* Fill bar with background color if bar should extend beyond text */
-	if (!expand)
-		pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
-				&(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
+                struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, m->bufsize);
+                m->wl_buffer = wl_shm_pool_create_buffer(pool, 0,
+                        m->width, height, m->stride, WL_SHM_FORMAT_ARGB8888);
+                wl_buffer_add_listener(m->wl_buffer, &wl_buffer_listener, NULL);
+                wl_shm_pool_destroy(pool);
+                close(fd);
+
+                /* Pixman image corresponding to main buffer */
+                m->bar = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+                        m->width, height, m->data, m->width * 4);
+                /* Fill bar with background color if bar should extend beyond text */
+                if (!expand)
+                        pixman_image_fill_boxes(PIXMAN_OP_SRC, m->bar, &bgcolor, 1,
+                                        &(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
+        }
 
         /* Sub-window layers */
-	pixman_image_t *swbg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-			m->width, height, NULL, m->width * 4);
-	pixman_image_t *swfg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-			m->width, height, NULL, m->width * 4);
+        pixman_image_t *swbg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+                        maxlayerwidth, height, NULL, maxlayerwidth * 4);
+        pixman_image_t *swfg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+                        maxlayerwidth, height, NULL, maxlayerwidth * 4);
 
         /* Title window layers */
-	pixman_image_t *twbg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-			m->width, height, NULL, m->width * 4);
-	pixman_image_t *twfg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-			m->width, height, NULL, m->width * 4);
+        pixman_image_t *twbg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+                        maxlayerwidth, height, NULL, maxlayerwidth * 4);
+        pixman_image_t *twfg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+                        maxlayerwidth, height, NULL, maxlayerwidth * 4);
 
 	pixman_image_t *fgfill = pixman_image_create_solid_fill(&textfgcolor);
 
-        uint32_t twxpos = 0, swxpos = 0, maxxpos = 0, twypos, swypos;
+        uint32_t twxpos = 0, swxpos = 0, twypos, swypos;
 	/* start drawing at center-left (ypos sets the text baseline) */
         twypos = swypos = (height + font->ascent - font->descent) / 2;
 
@@ -430,7 +439,6 @@ draw_frame(char *text, Monitor *m)
                         bglayer = swbg;
                         fglayer = swbg;
                 }
-
 
 		/* Returns nonzero if more bytes are needed */
 		if (utf8decode(&state, &codepoint, *p))
@@ -467,42 +475,41 @@ draw_frame(char *text, Monitor *m)
 				*xpos + glyph->x, *ypos - glyph->y, glyph->width, glyph->height);
 		}
 
-		if (xpos < m->width) {
-			pixman_image_fill_boxes(PIXMAN_OP_OVER, bglayer,
-					&textbgcolor, 1, &(pixman_box32_t){
-						.x1 = *xpos,
-						.x2 = MIN(*xpos + glyph->advance.x, m->width),
-						.y1 = 0,
-						.y2 = height,
-					});
-		}
+                pixman_image_fill_boxes(PIXMAN_OP_OVER, bglayer,
+                                &textbgcolor, 1, &(pixman_box32_t){
+                                        .x1 = *xpos,
+                                        .x2 = MIN(*xpos + glyph->advance.x, maxlayerwidth),
+                                        .y1 = 0,
+                                        .y2 = height,
+                                });
 
 		/* increment pen position */
 		*xpos += glyph->advance.x;
 		*ypos += glyph->advance.y;
-		maxxpos = MAX(maxxpos, *xpos);
 	}
 	pixman_image_unref(fgfill);
 
 	if (state != UTF8_ACCEPT)
 		fprintf(stderr, "malformed UTF-8 sequence\n");
 
-	pixman_image_composite32(PIXMAN_OP_OVER, swbg, NULL, bar, 0, 0, 0, 0,
-			m->width - swxpos, 0, swxpos, height);
-	pixman_image_composite32(PIXMAN_OP_OVER, swfg, NULL, bar, 0, 0, 0, 0,
-			m->width - swxpos, 0, swxpos, height);
-	pixman_image_composite32(PIXMAN_OP_OVER, twbg, NULL, bar, 0, 0, 0, 0,
-			0, 0, m->width, height);
-	pixman_image_composite32(PIXMAN_OP_OVER, twfg, NULL, bar, 0, 0, 0, 0,
-			0, 0, m->width, height);
+        for (int i = 0; i < nummons; i++) {
+                m = &monitors[i];
+                pixman_image_composite32(PIXMAN_OP_OVER, swbg, NULL, m->bar, 0, 0, 0, 0,
+                                m->width - swxpos, 0, swxpos, height);
+                pixman_image_composite32(PIXMAN_OP_OVER, swfg, NULL, m->bar, 0, 0, 0, 0,
+                                m->width - swxpos, 0, swxpos, height);
+                pixman_image_composite32(PIXMAN_OP_OVER, twbg, NULL, m->bar, 0, 0, 0, 0,
+                                0, 0, maxlayerwidth, height);
+                pixman_image_composite32(PIXMAN_OP_OVER, twfg, NULL, m->bar, 0, 0, 0, 0,
+                                0, 0, maxlayerwidth, height);
+	        pixman_image_unref(m->bar);
+	        munmap(m->data, m->bufsize);
+        }
 
 	pixman_image_unref(swbg);
 	pixman_image_unref(swfg);
 	pixman_image_unref(twbg);
 	pixman_image_unref(twfg);
-	pixman_image_unref(bar);
-	munmap(data, m->bufsize);
-	return buffer;
 }
 
 /* Layer-surface setup adapted from layer-shell example in [wlroots] */
@@ -524,13 +531,6 @@ layer_surface_configure(void *data,
 		exclusive_zone = height;
 	zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, exclusive_zone);
 	zwlr_layer_surface_v1_ack_configure(surface, serial);
-
-	m->wl_buffer = draw_frame(lastline, m);
-	if (!m->wl_buffer)
-		return;
-	wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
-	wl_surface_damage_buffer(m->wl_surface, 0, 0, m->width, height);
-	wl_surface_commit(m->wl_surface);
 }
 
 static void
@@ -653,6 +653,21 @@ handle_global(void *data, struct wl_registry *registry,
 static const struct wl_registry_listener registry_listener = {.global = handle_global,};
 
 static void
+drawbar()
+{
+        draw_frame("asdasd asdl asld");
+        for (int i = 0; i < nummons; i++) {
+                m = &monitors[i];
+                if (!m->wl_buffer)
+                        continue;
+                printf("asdasd\n");
+                wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
+                wl_surface_damage_buffer(m->wl_surface, 0, 0, m->width, height);
+                wl_surface_commit(m->wl_surface);
+        }
+}
+
+static void
 read_stdin(void)
 {
 
@@ -679,12 +694,6 @@ read_stdin(void)
 
 		/* Keep last line for redrawing purposes */
 		memcpy(lastline, curline, end - curline);
-
-                for (int i = 0; i < nummons; i++) {
-                        m = &monitors[i];
-                        if (!(m->wl_buffer = draw_frame(lastline, m)))
-                                break;
-                }
 	}
 
 	if (linerem == MAX_LINE_LEN || eat_line) {
@@ -696,14 +705,7 @@ read_stdin(void)
 		memmove(line, curline, linerem);
 	}
 
-        for (int i = 0; i < nummons; i++) {
-                m = &monitors[i];
-                if (!m->wl_buffer)
-                        continue;
-                wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
-                wl_surface_damage_buffer(m->wl_surface, 0, 0, m->width, height);
-                wl_surface_commit(m->wl_surface);
-        }
+        drawbar();
 }
 
 static void
@@ -882,8 +884,12 @@ main(int argc, char **argv)
                 zwlr_layer_surface_v1_set_anchor(m->layer_surface, anchor);
 	        wl_surface_commit(m->wl_surface);
 	        wl_display_roundtrip(display);
+
+                if (maxlayerwidth == 0 || maxlayerwidth > m->width)
+                        maxlayerwidth = m->width;
         }
 
+        drawbar();
 	event_loop();
 
 	/* Clean everything up */
