@@ -37,8 +37,15 @@
 #define MAX_LINE_LEN 8192
 #define MAX_CLICKABLE_AREAS 64
 #define MAX_CLICKABLE_AREA_CMD_LEN 128
+#define MAX_OUTPUT_MONITORS 2
 
 enum align { ALIGN_C, ALIGN_L, ALIGN_R };
+
+typedef struct {
+        struct wl_output *wl_output;
+        struct wl_surface *wl_surface;
+        struct zwlr_layer_surface_v1 *layer_surface;
+} Monitor;
 
 static struct wl_display *display;
 static struct wl_compositor *compositor;
@@ -47,10 +54,8 @@ static struct zwlr_layer_shell_v1 *layer_shell;
 
 struct wl_seat *seat = NULL;
 
-static struct zwlr_layer_surface_v1 *layer_surface;
-static struct wl_output *wl_output;
-static struct wl_surface *wl_surface;
 static struct wl_surface *active_wl_surface;
+static Monitor monitors[MAX_OUTPUT_MONITORS];
 
 static int32_t output = -1;
 
@@ -64,8 +69,8 @@ static enum align titlealign, subalign;
 static bool expand;
 static bool run_display = true;
 
+static uint32_t savedmons = 0;
 static uint32_t savedx = 0;
-
 static uint32_t mousex = 0;
 static uint32_t mousey = 0;
 
@@ -485,25 +490,30 @@ layer_surface_configure(void *data,
 	height = h;
 	stride = width * 4;
 	bufsize = stride * height;
+        Monitor *m = data;
+
+        if (!m || !m->wl_surface || !m->layer_surface)
+                BARF("failed to configure layer surface, no monitor defined.");
 
 	if (exclusive_zone > 0)
 		exclusive_zone = height;
-	zwlr_layer_surface_v1_set_exclusive_zone(layer_surface, exclusive_zone);
+	zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, exclusive_zone);
 	zwlr_layer_surface_v1_ack_configure(surface, serial);
 
 	struct wl_buffer *buffer = draw_frame(lastline);
 	if (!buffer)
 		return;
-	wl_surface_attach(wl_surface, buffer, 0, 0);
-	wl_surface_damage_buffer(wl_surface, 0, 0, width, height);
-	wl_surface_commit(wl_surface);
+	wl_surface_attach(m->wl_surface, buffer, 0, 0);
+	wl_surface_damage_buffer(m->wl_surface, 0, 0, width, height);
+	wl_surface_commit(m->wl_surface);
 }
 
 static void
 layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface)
 {
+        Monitor *m = data;
 	zwlr_layer_surface_v1_destroy(surface);
-	wl_surface_destroy(wl_surface);
+	wl_surface_destroy(m->wl_surface);
 	run_display = false;
 }
 
@@ -540,7 +550,8 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 		uint32_t serial, uint32_t time, uint32_t button,
 		uint32_t state)
 {
-	if(active_wl_surface == wl_surface && state) {
+        Monitor *m = data;
+	if(active_wl_surface == m->wl_surface && state) {
 		for(uint32_t i=0; i < ca_entry_count; i++) {
 			struct ca_entry entry = ca_entries[i];
 			if(entry.mouse_button == button - BTN_LEFT &&
@@ -582,7 +593,7 @@ seat_handle_capabilities(void *data, struct wl_seat *seat,
 {
 	if (caps & WL_SEAT_CAPABILITY_POINTER) {
 		struct wl_pointer *pointer = wl_seat_get_pointer(seat);
-		wl_pointer_add_listener(pointer, &pointer_listener, NULL);
+		wl_pointer_add_listener(pointer, &pointer_listener, &monitors[0]);
 	}
 }
 
@@ -602,8 +613,10 @@ handle_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, wl_output_interface.name) == 0) {
 		struct wl_output *o = wl_registry_bind(registry, name,
 				&wl_output_interface, 1);
-		if (output-- == 0)
-			wl_output = o;
+                if (savedmons < MAX_OUTPUT_MONITORS) {
+                        monitors[savedmons] = (Monitor){.wl_output = o};
+                        savedmons++;
+                }
 	} else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
 		layer_shell = wl_registry_bind(registry, name,
 				&zwlr_layer_shell_v1_interface, 1);
@@ -632,6 +645,7 @@ read_stdin(void)
 	/* Handle each line in the buffer in turn */
 	char *curline, *end;
 	struct wl_buffer *buffer = NULL;
+        Monitor m;
 	for (curline = line; (end = memchr(curline, '\n', linerem)); curline = end) {
 		*end++ = '\0';
 		linerem -= end - curline;
@@ -659,9 +673,12 @@ read_stdin(void)
 
 	/* Redraw if anything new was rendered */
 	if (buffer) {
-		wl_surface_attach(wl_surface, buffer, 0, 0);
-		wl_surface_damage_buffer(wl_surface, 0, 0, width, height);
-		wl_surface_commit(wl_surface);
+                for (int i = 0; i < savedmons; i++) {
+                        m = monitors[i];
+                        wl_surface_attach(m.wl_surface, buffer, 0, 0);
+                        wl_surface_damage_buffer(m.wl_surface, 0, 0, width, height);
+                        wl_surface_commit(m.wl_surface);
+                }
 	}
 }
 
@@ -699,6 +716,7 @@ main(int argc, char **argv)
 	char *namespace = "dtao";
 	char *fontstr = "";
 	char *actionstr = "";
+        Monitor m;
 	uint32_t layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
 	uint32_t anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
 			ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
@@ -824,33 +842,37 @@ main(int argc, char **argv)
 	if (!font)
 		BARF("could not load font");
 
-	/* Create layer-shell surface */
-	wl_surface = wl_compositor_create_surface(compositor);
-	if (!wl_surface)
-		BARF("could not create wl_surface");
+        for (int i = 0; i < savedmons; i++) {
+                m = monitors[i];
+                /* Create layer-shell surface */
+                m.wl_surface = wl_compositor_create_surface(compositor);
+                if (!m.wl_surface)
+		        BARF("could not create wl_surface");
+                m.layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell,
+                                m.wl_surface, m.wl_output, layer, namespace);
+                if (!m.layer_surface)
+                        BARF("could not create layer_surface");
+                zwlr_layer_surface_v1_add_listener(m.layer_surface,
+                                &layer_surface_listener, &m);
 
-	layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell,
-			wl_surface, wl_output, layer, namespace);
-	if (!layer_surface)
-		BARF("could not create layer_surface");
-	zwlr_layer_surface_v1_add_listener(layer_surface,
-			&layer_surface_listener, layer_surface);
+                /* Set layer size and positioning */
+                if (!height)
+                        height = font->ascent + font->descent;
 
-	/* Set layer size and positioning */
-	if (!height)
-		height = font->ascent + font->descent;
-
-	zwlr_layer_surface_v1_set_size(layer_surface, width, height);
-	zwlr_layer_surface_v1_set_anchor(layer_surface, anchor);
-
-	wl_surface_commit(wl_surface);
-	wl_display_roundtrip(display);
+                zwlr_layer_surface_v1_set_size(m.layer_surface, width, height);
+                zwlr_layer_surface_v1_set_anchor(m.layer_surface, anchor);
+	        wl_surface_commit(m.wl_surface);
+	        wl_display_roundtrip(display);
+        }
 
 	event_loop();
 
 	/* Clean everything up */
-	zwlr_layer_surface_v1_destroy(layer_surface);
-	wl_surface_destroy(wl_surface);
+        for (int i = 0; i < savedmons; i++) {
+                m = monitors[i];
+	        zwlr_layer_surface_v1_destroy(m.layer_surface);
+	        wl_surface_destroy(m.wl_surface);
+        }
 	zwlr_layer_shell_v1_destroy(layer_shell);
 	fcft_destroy(font);
 	wl_shm_destroy(shm);
