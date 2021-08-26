@@ -37,7 +37,7 @@
 #define MAX_LINE_LEN 8192
 #define MAX_CLICKABLE_AREAS 64
 #define MAX_CLICKABLE_AREA_CMD_LEN 128
-#define MAX_OUTPUT_MONITORS 2
+#define MAX_OUTPUT_MONITORS 8
 
 enum align { ALIGN_C, ALIGN_L, ALIGN_R };
 
@@ -63,9 +63,10 @@ static int32_t output = -1;
 
 static uint32_t height, titlewidth;
 static Monitor *m;
+static Monitor *selmon;
 static int lines;
 static int persist;
-static int savedmons = 0;
+static int nummons = 0;
 static bool unified;
 static int exclusive_zone = -1;
 static enum align titlealign, subalign;
@@ -614,9 +615,9 @@ handle_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, wl_output_interface.name) == 0) {
 		struct wl_output *o = wl_registry_bind(registry, name,
 				&wl_output_interface, 1);
-                if (savedmons < MAX_OUTPUT_MONITORS) {
-                        monitors[savedmons] = (Monitor){.wl_output = o};
-                        savedmons++;
+                if (nummons < MAX_OUTPUT_MONITORS) {
+                        monitors[nummons] = (Monitor){.wl_output = o};
+                        nummons++;
                 }
 	} else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
 		layer_shell = wl_registry_bind(registry, name,
@@ -658,7 +659,7 @@ read_stdin(void)
 		/* Keep last line for redrawing purposes */
 		memcpy(lastline, curline, end - curline);
 
-                for (int i = 0; i < savedmons; i++) {
+                for (int i = 0; i < nummons; i++) {
                         m = &monitors[i];
                         if (!(m->wl_buffer = draw_frame(lastline, m)))
                                 break;
@@ -674,7 +675,7 @@ read_stdin(void)
 		memmove(line, curline, linerem);
 	}
 
-        for (int i = 0; i < savedmons; i++) {
+        for (int i = 0; i < nummons; i++) {
                 m = &monitors[i];
                 if (!m->wl_buffer)
                         continue;
@@ -839,7 +840,7 @@ main(int argc, char **argv)
 	if (!font)
 		BARF("could not load font");
 
-        for (int i = 0; i < savedmons; i++) {
+        for (int i = 0; i < nummons; i++) {
                 m = &monitors[i];
                 /* Create layer-shell surface */
                 m->wl_surface = wl_compositor_create_surface(compositor);
@@ -865,7 +866,7 @@ main(int argc, char **argv)
 	event_loop();
 
 	/* Clean everything up */
-        for (int i = 0; i < savedmons; i++) {
+        for (int i = 0; i < nummons; i++) {
                 m = &monitors[i];
 	        zwlr_layer_surface_v1_destroy(m->layer_surface);
 	        wl_surface_destroy(m->wl_surface);
