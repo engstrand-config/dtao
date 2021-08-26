@@ -137,7 +137,7 @@ The `p` and `pa` commands accept the following argument formats:
     <pct> percent of the text ascent or descent
 
 
-### Interaction [UNIMPLEMENTED]
+### Interaction
 
 * `^ca(`<btn>`,`<cmd>`)`, `^ca()`:
     defines beginning and end of a "clickable area"; when mouse button number <btn> is pressed over the text drawn between these two commands, spawn the command <cmd>
@@ -148,17 +148,13 @@ The `p` and `pa` commands accept the following argument formats:
 The actions \[`toggle`\|`un`\]`collapse`, \[`toggle`\|`un`\]`stick`, \[`toggle`\|`un`\]`hide`, `raise`, `lower`, `scroll`\{`home`\|`end`\}, and `exit` may be used as commands.
 
 
-### Other [UNIMPLEMENTED]
+### Other
 
 * `^tw()`:
-    clear the title window and write the remainder of the line to it
+    write the text to the title window
 
-* `^cs()`:
-    clear the sub-window and write the remainder of the line to it
-
-* `^ib(`{`0`|`1`}`)`:
-    [DEPRECATED] stop (`1`) or start (`0`) drawing background fill; dtao supports alpha, so this command should be converted to `^bg(#00000000)` and `^bg(`<origclr>`)`
-
+* `^sw()`:
+    write the text to the sub-window
 
 ## EXIT STATUS
 

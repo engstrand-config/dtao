@@ -296,7 +296,8 @@ parse_clickable_area(char *str, uint32_t *xpos, uint32_t *ypos)
 }
 
 static char *
-handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg, uint32_t *xpos, uint32_t *ypos)
+handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
+        uint32_t *xpos, uint32_t *ypos, uint32_t *istw)
 {
 	char *arg, *end;
 
@@ -331,6 +332,10 @@ handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg, uint32
 	} else if (!strcmp(cmd, "ca")) {
 		if (parse_clickable_area(arg, xpos, ypos))
 			fprintf(stderr, "Invalid clickable area command argument \"%s\"\n", arg);
+        } else if (!strcmp(cmd, "tw")) {
+                *istw = 1;
+        } else if (!strcmp(cmd, "sw")) {
+                *istw = 0;
 	} else {
 		fprintf(stderr, "Unrecognized command \"%s\"\n", cmd);
 	}
@@ -376,32 +381,56 @@ draw_frame(char *text, Monitor *m)
 		pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
 				&(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
 
-	/* Text background and foreground layers */
-	pixman_image_t *background = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+        /* Sub-window layers */
+	pixman_image_t *swbg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
 			m->width, height, NULL, m->width * 4);
-	pixman_image_t *foreground = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+	pixman_image_t *swfg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+			m->width, height, NULL, m->width * 4);
+
+        /* Title window layers */
+	pixman_image_t *twbg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+			m->width, height, NULL, m->width * 4);
+	pixman_image_t *twfg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
 			m->width, height, NULL, m->width * 4);
 
 	pixman_image_t *fgfill = pixman_image_create_solid_fill(&textfgcolor);
 
+        uint32_t twxpos = 0, swxpos = 0, maxxpos = 0, twypos, swypos;
 	/* start drawing at center-left (ypos sets the text baseline) */
-	uint32_t xpos = 0, maxxpos = 0;
-	uint32_t ypos = (height + font->ascent - font->descent) / 2;
+        twypos = swypos = (height + font->ascent - font->descent) / 2;
+
+        /* Draw in sub-window layer by default */
+	uint32_t *xpos = &swxpos;
+	uint32_t *ypos = &swypos;
 
 	ca_entry_count = 0;
 
-	uint32_t codepoint, lastcp = 0, state = UTF8_ACCEPT;
+        pixman_image_t *fglayer, *bglayer;
+	uint32_t codepoint, lastcp = 0, state = UTF8_ACCEPT, istw = 0;
 	for (char *p = text; *p; p++) {
 		/* Check for inline ^ commands */
 		if (state == UTF8_ACCEPT && *p == '^') {
 			p++;
 			if (*p != '^') {
-				p = handle_cmd(p, m, &textbgcolor, &textfgcolor, &xpos, &ypos);
+				p = handle_cmd(p, m, &textbgcolor, &textfgcolor, xpos, ypos, &istw);
 				pixman_image_unref(fgfill);
 				fgfill = pixman_image_create_solid_fill(&textfgcolor);
 				continue;
 			}
 		}
+
+                if (istw) {
+                        xpos = &twxpos;
+                        ypos = &twypos;
+                        bglayer = twbg;
+                        fglayer = twfg;
+                } else {
+                        xpos = &swxpos;
+                        ypos = &swypos;
+                        bglayer = swbg;
+                        fglayer = swbg;
+                }
+
 
 		/* Returns nonzero if more bytes are needed */
 		if (utf8decode(&state, &codepoint, *p))
@@ -418,7 +447,7 @@ draw_frame(char *text, Monitor *m)
 		long x_kern = 0;
 		if (lastcp)
 			fcft_kerning(font, lastcp, codepoint, &x_kern, NULL);
-		xpos += x_kern;
+		*xpos += x_kern;
 		lastcp = codepoint;
 
 		/* Detect and handle pre-rendered glyphs (e.g. emoji) */
@@ -427,58 +456,50 @@ draw_frame(char *text, Monitor *m)
 			 * use fgfill here to blend prerendered glyphs with the
 			 * same opacity */
 			pixman_image_composite32(
-				PIXMAN_OP_OVER, glyph->pix, fgfill, foreground, 0, 0, 0, 0,
-				xpos + glyph->x, ypos - glyph->y, glyph->width, glyph->height);
+				PIXMAN_OP_OVER, glyph->pix, fgfill, fglayer, 0, 0, 0, 0,
+				*xpos + glyph->x, *ypos - glyph->y, glyph->width, glyph->height);
 		} else {
 			/* Applying the foreground color here would mess up
 			 * component alphas for subpixel-rendered text, so we
 			 * apply it when blending. */
 			pixman_image_composite32(
-				PIXMAN_OP_OVER, fgfill, glyph->pix, foreground, 0, 0, 0, 0,
-				xpos + glyph->x, ypos - glyph->y, glyph->width, glyph->height);
+				PIXMAN_OP_OVER, fgfill, glyph->pix, fglayer, 0, 0, 0, 0,
+				*xpos + glyph->x, *ypos - glyph->y, glyph->width, glyph->height);
 		}
 
 		if (xpos < m->width) {
-			pixman_image_fill_boxes(PIXMAN_OP_OVER, background,
+			pixman_image_fill_boxes(PIXMAN_OP_OVER, bglayer,
 					&textbgcolor, 1, &(pixman_box32_t){
-						.x1 = xpos,
-						.x2 = MIN(xpos + glyph->advance.x, m->width),
+						.x1 = *xpos,
+						.x2 = MIN(*xpos + glyph->advance.x, m->width),
 						.y1 = 0,
 						.y2 = height,
 					});
 		}
 
 		/* increment pen position */
-		xpos += glyph->advance.x;
-		ypos += glyph->advance.y;
-		maxxpos = MAX(maxxpos, xpos);
+		*xpos += glyph->advance.x;
+		*ypos += glyph->advance.y;
+		maxxpos = MAX(maxxpos, *xpos);
 	}
 	pixman_image_unref(fgfill);
 
 	if (state != UTF8_ACCEPT)
 		fprintf(stderr, "malformed UTF-8 sequence\n");
 
-	/* Draw background and foreground on bar */
-	int32_t xdraw;
-	switch (titlealign) {
-		case ALIGN_L:
-			xdraw = 0;
-			break;
-		case ALIGN_R:
-			xdraw = m->width - maxxpos;
-			break;
-		case ALIGN_C:
-		default:
-			xdraw = (m->width - maxxpos) / 2;
-			break;
-	}
-	pixman_image_composite32(PIXMAN_OP_OVER, background, NULL, bar, 0, 0, 0, 0,
-			xdraw, 0, m->width, height);
-	pixman_image_composite32(PIXMAN_OP_OVER, foreground, NULL, bar, 0, 0, 0, 0,
-			xdraw, 0, m->width, height);
+	pixman_image_composite32(PIXMAN_OP_OVER, swbg, NULL, bar, 0, 0, 0, 0,
+			m->width - swxpos, 0, swxpos, height);
+	pixman_image_composite32(PIXMAN_OP_OVER, swfg, NULL, bar, 0, 0, 0, 0,
+			m->width - swxpos, 0, swxpos, height);
+	pixman_image_composite32(PIXMAN_OP_OVER, twbg, NULL, bar, 0, 0, 0, 0,
+			0, 0, m->width, height);
+	pixman_image_composite32(PIXMAN_OP_OVER, twfg, NULL, bar, 0, 0, 0, 0,
+			0, 0, m->width, height);
 
-	pixman_image_unref(foreground);
-	pixman_image_unref(background);
+	pixman_image_unref(swbg);
+	pixman_image_unref(swfg);
+	pixman_image_unref(twbg);
+	pixman_image_unref(twfg);
 	pixman_image_unref(bar);
 	munmap(data, m->bufsize);
 	return buffer;
