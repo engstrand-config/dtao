@@ -395,7 +395,7 @@ draw_frame(char *text, Monitor *m)
 
 	pixman_image_t *fgfill = pixman_image_create_solid_fill(&textfgcolor);
 
-        uint32_t twxpos = 0, swxpos = 0, maxxpos = 0, twypos, swypos;
+        uint32_t twxpos = 0, swxpos = 0, twypos, swypos;
 	/* start drawing at center-left (ypos sets the text baseline) */
         twypos = swypos = (height + font->ascent - font->descent) / 2;
 
@@ -428,7 +428,7 @@ draw_frame(char *text, Monitor *m)
                         xpos = &swxpos;
                         ypos = &swypos;
                         bglayer = swbg;
-                        fglayer = swbg;
+                        fglayer = swfg;
                 }
 
 
@@ -467,7 +467,7 @@ draw_frame(char *text, Monitor *m)
 				*xpos + glyph->x, *ypos - glyph->y, glyph->width, glyph->height);
 		}
 
-		if (xpos < m->width) {
+		if (*xpos < m->width) {
 			pixman_image_fill_boxes(PIXMAN_OP_OVER, bglayer,
 					&textbgcolor, 1, &(pixman_box32_t){
 						.x1 = *xpos,
@@ -480,7 +480,6 @@ draw_frame(char *text, Monitor *m)
 		/* increment pen position */
 		*xpos += glyph->advance.x;
 		*ypos += glyph->advance.y;
-		maxxpos = MAX(maxxpos, *xpos);
 	}
 	pixman_image_unref(fgfill);
 
@@ -492,9 +491,9 @@ draw_frame(char *text, Monitor *m)
 	pixman_image_composite32(PIXMAN_OP_OVER, swfg, NULL, bar, 0, 0, 0, 0,
 			m->width - swxpos, 0, swxpos, height);
 	pixman_image_composite32(PIXMAN_OP_OVER, twbg, NULL, bar, 0, 0, 0, 0,
-			0, 0, m->width, height);
+			0, 0, m->width - swxpos, height);
 	pixman_image_composite32(PIXMAN_OP_OVER, twfg, NULL, bar, 0, 0, 0, 0,
-			0, 0, m->width, height);
+			0, 0, m->width - swxpos, height);
 
 	pixman_image_unref(swbg);
 	pixman_image_unref(swfg);
@@ -503,6 +502,24 @@ draw_frame(char *text, Monitor *m)
 	pixman_image_unref(bar);
 	munmap(data, m->bufsize);
 	return buffer;
+}
+
+static void
+drawbar(Monitor *m)
+{
+	m->wl_buffer = draw_frame(lastline, m);
+	if (!m->wl_buffer)
+		return;
+	wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
+	wl_surface_damage_buffer(m->wl_surface, 0, 0, m->width, height);
+	wl_surface_commit(m->wl_surface);
+}
+
+static void
+drawbars()
+{
+        for (int i = 0; i < nummons; i++)
+                drawbar(&monitors[i]);
 }
 
 /* Layer-surface setup adapted from layer-shell example in [wlroots] */
@@ -524,13 +541,7 @@ layer_surface_configure(void *data,
 		exclusive_zone = height;
 	zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, exclusive_zone);
 	zwlr_layer_surface_v1_ack_configure(surface, serial);
-
-	m->wl_buffer = draw_frame(lastline, m);
-	if (!m->wl_buffer)
-		return;
-	wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
-	wl_surface_damage_buffer(m->wl_surface, 0, 0, m->width, height);
-	wl_surface_commit(m->wl_surface);
+        drawbar(m);
 }
 
 static void
@@ -574,7 +585,7 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 		uint32_t serial, uint32_t time, uint32_t button,
 		uint32_t state)
 {
-	if(active_wl_surface == ((Monitor*)data)->wl_surface && state) {
+	if(active_wl_surface && state) {
 		for(uint32_t i=0; i < ca_entry_count; i++) {
 			struct ca_entry entry = ca_entries[i];
 			if(entry.mouse_button == button - BTN_LEFT &&
@@ -616,7 +627,7 @@ seat_handle_capabilities(void *data, struct wl_seat *seat,
 {
 	if (caps & WL_SEAT_CAPABILITY_POINTER) {
 		struct wl_pointer *pointer = wl_seat_get_pointer(seat);
-		wl_pointer_add_listener(pointer, &pointer_listener, &monitors[0]);
+		wl_pointer_add_listener(pointer, &pointer_listener, NULL);
 	}
 }
 
@@ -679,12 +690,6 @@ read_stdin(void)
 
 		/* Keep last line for redrawing purposes */
 		memcpy(lastline, curline, end - curline);
-
-                for (int i = 0; i < nummons; i++) {
-                        m = &monitors[i];
-                        if (!(m->wl_buffer = draw_frame(lastline, m)))
-                                break;
-                }
 	}
 
 	if (linerem == MAX_LINE_LEN || eat_line) {
@@ -696,14 +701,7 @@ read_stdin(void)
 		memmove(line, curline, linerem);
 	}
 
-        for (int i = 0; i < nummons; i++) {
-                m = &monitors[i];
-                if (!m->wl_buffer)
-                        continue;
-                wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
-                wl_surface_damage_buffer(m->wl_surface, 0, 0, m->width, height);
-                wl_surface_commit(m->wl_surface);
-        }
+        drawbars();
 }
 
 static void
