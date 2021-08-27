@@ -402,8 +402,9 @@ draw_frame(char *text, Monitor *m)
 	m->numcas = 0;
 
         bool istw = false;
-        pixman_image_t *fglayer, *bglayer;
+        pixman_image_t *fglayer = swfg, *bglayer = swbg;
 	uint32_t codepoint, lastcp = 0, state = UTF8_ACCEPT;
+
 	for (char *p = text; *p; p++) {
 		/* Check for inline ^ commands */
 		if (state == UTF8_ACCEPT && *p == '^') {
@@ -412,22 +413,20 @@ draw_frame(char *text, Monitor *m)
 				p = handle_cmd(p, m, &textbgcolor, &textfgcolor, xpos, ypos, &istw);
 				pixman_image_unref(fgfill);
 				fgfill = pixman_image_create_solid_fill(&textfgcolor);
+                                if (istw) {
+                                        xpos = &twxpos;
+                                        ypos = &twypos;
+                                        bglayer = twbg;
+                                        fglayer = twfg;
+                                } else {
+                                        xpos = &swxpos;
+                                        ypos = &swypos;
+                                        bglayer = swbg;
+                                        fglayer = swfg;
+                                }
 				continue;
 			}
 		}
-
-                if (istw) {
-                        xpos = &twxpos;
-                        ypos = &twypos;
-                        bglayer = twbg;
-                        fglayer = twfg;
-                } else {
-                        xpos = &swxpos;
-                        ypos = &swypos;
-                        bglayer = swbg;
-                        fglayer = swfg;
-                }
-
 
 		/* Returns nonzero if more bytes are needed */
 		if (utf8decode(&state, &codepoint, *p))
