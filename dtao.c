@@ -42,11 +42,22 @@
 enum align { ALIGN_C, ALIGN_L, ALIGN_R };
 
 typedef struct {
-        uint32_t width, stride, bufsize;
+        uint32_t fromx;
+        uint32_t tox;
+        uint32_t fromy;
+        uint32_t toy;
+        uint32_t button;
+        bool istw;
+        char cmd[MAX_CLICKABLE_AREA_CMD_LEN];
+} ClickableArea;
+
+typedef struct {
         struct wl_output *wl_output;
         struct wl_surface *wl_surface;
         struct wl_buffer *wl_buffer;
         struct zwlr_layer_surface_v1 *layer_surface;
+        ClickableArea cas[MAX_CLICKABLE_AREAS];
+        uint32_t width, stride, bufsize, numcas;
 } Monitor;
 
 static struct wl_display *display;
@@ -56,14 +67,10 @@ static struct zwlr_layer_shell_v1 *layer_shell;
 
 struct wl_seat *seat = NULL;
 
-static struct wl_surface *active_wl_surface;
+static struct wl_surface *activesurface;
 static Monitor monitors[MAX_OUTPUT_MONITORS];
 
-static int32_t output = -1;
-
-static uint32_t height, titlewidth;
 static Monitor *m;
-static Monitor *selmon;
 static int lines;
 static int persist;
 static int nummons = 0;
@@ -72,24 +79,14 @@ static int exclusive_zone = -1;
 static enum align titlealign, subalign;
 static bool expand;
 static bool run_display = true;
+static bool cawaiting = false;
+
+static int32_t output = -1;
+static uint32_t height, titlewidth;
 
 static uint32_t savedx = 0;
 static uint32_t mousex = 0;
 static uint32_t mousey = 0;
-
-static struct ca_entry {
-	uint32_t from_x;
-	uint32_t to_x;
-	uint32_t from_y;
-	uint32_t to_y;
-	uint32_t mouse_button;
-	char cmd[MAX_CLICKABLE_AREA_CMD_LEN];
-} ca_entry_creating;
-
-static uint32_t ca_entry_count = 0;
-static struct ca_entry ca_entries[MAX_CLICKABLE_AREAS];
-
-static bool ca_waiting = false;
 
 static struct fcft_font *font;
 static char line[MAX_LINE_LEN];
@@ -235,41 +232,41 @@ parse_movement(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, uint32_t x
 }
 
 static int
-parse_clickable_area(char *str, uint32_t *xpos, uint32_t *ypos)
+parse_clickable_area(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, bool istw)
 {
-	if (ca_waiting) {
+        ClickableArea *entry = &(m->cas[m->numcas]);
+	if (cawaiting) {
 		if(*str) {
 			fprintf(stderr, "Second clickable area command must have 0 arguments\n");
 			return 1;
 		}
 
-		ca_entry_creating.to_x = *xpos;
-		ca_entry_creating.to_y = *ypos;
+		entry->tox = *xpos;
+		entry->toy = *ypos;
 
-		if(ca_entry_creating.to_x < ca_entry_creating.from_x) {
-			uint32_t temp = ca_entry_creating.to_x;
-			ca_entry_creating.to_x = ca_entry_creating.from_x;
-			ca_entry_creating.from_x = temp;
+		if(entry->tox < entry->fromx) {
+			uint32_t temp = entry->tox;
+			entry->tox = entry->fromx;
+			entry->fromx = temp;
 		}
-		if(ca_entry_creating.to_y < ca_entry_creating.from_y) {
-			uint32_t temp = ca_entry_creating.to_y;
-			ca_entry_creating.to_y = ca_entry_creating.from_y;
-			ca_entry_creating.from_y = temp;
+		if(entry->toy < entry->fromy) {
+			uint32_t temp = entry->toy;
+                        entry->toy = entry->fromy;
+		        entry->fromy = temp;
 		}
 
-		ca_entry_creating.from_y -= font->ascent;
+		entry->fromy -= font->ascent;
 
-		memcpy(&ca_entries[ca_entry_count++], &ca_entry_creating, sizeof(struct ca_entry));
-
-		ca_waiting = false;
+                m->numcas++;
+		cawaiting = false;
 	} else {
 		if (!*str) {
 			fprintf(stderr, "Second clickable area command must have 2 arguments (0 provided)\n");
 			return 1;
 		}
-		int mouse_button = *str - '0';
-		if(mouse_button < 0 || mouse_button > 9) {
-			fprintf(stderr, "Invalid mouse button: %d", mouse_button);
+		int button = *str - '0';
+		if(button < 0 || button > 9) {
+			fprintf(stderr, "Invalid mouse button: %d", button);
 			return 1;
 		}
 		str++;
@@ -283,13 +280,16 @@ parse_clickable_area(char *str, uint32_t *xpos, uint32_t *ypos)
 			return 1;
 		}
 
-		ca_entry_creating.from_x = *xpos;
-		ca_entry_creating.from_y = *ypos;
-		ca_entry_creating.to_x = 0;
-		ca_entry_creating.to_y = 0;
+		entry->fromx = *xpos;
+		entry->fromy = *ypos;
+		entry->tox = 0;
+		entry->toy = 0;
 
-		strcpy(ca_entry_creating.cmd, cmd);
-		ca_waiting = true;
+                /* Keep track of the buffer in which the clickable entry is drawn */
+                entry->istw = istw;
+
+		strcpy(entry->cmd, cmd);
+		cawaiting = true;
 	}
 
 	return 0;
@@ -297,7 +297,7 @@ parse_clickable_area(char *str, uint32_t *xpos, uint32_t *ypos)
 
 static char *
 handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
-        uint32_t *xpos, uint32_t *ypos, uint32_t *istw)
+        uint32_t *xpos, uint32_t *ypos, bool *istw)
 {
 	char *arg, *end;
 
@@ -330,12 +330,12 @@ handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
 	} else if (!strcmp(cmd, "rx")) {
 		*xpos = savedx;
 	} else if (!strcmp(cmd, "ca")) {
-		if (parse_clickable_area(arg, xpos, ypos))
+		if (parse_clickable_area(arg, m, xpos, ypos, *istw))
 			fprintf(stderr, "Invalid clickable area command argument \"%s\"\n", arg);
         } else if (!strcmp(cmd, "tw")) {
-                *istw = 1;
+                *istw = true;
         } else if (!strcmp(cmd, "sw")) {
-                *istw = 0;
+                *istw = false;
 	} else {
 		fprintf(stderr, "Unrecognized command \"%s\"\n", cmd);
 	}
@@ -403,10 +403,11 @@ draw_frame(char *text, Monitor *m)
 	uint32_t *xpos = &swxpos;
 	uint32_t *ypos = &swypos;
 
-	ca_entry_count = 0;
+	m->numcas = 0;
 
+        bool istw = false;
         pixman_image_t *fglayer, *bglayer;
-	uint32_t codepoint, lastcp = 0, state = UTF8_ACCEPT, istw = 0;
+	uint32_t codepoint, lastcp = 0, state = UTF8_ACCEPT;
 	for (char *p = text; *p; p++) {
 		/* Check for inline ^ commands */
 		if (state == UTF8_ACCEPT && *p == '^') {
@@ -486,14 +487,27 @@ draw_frame(char *text, Monitor *m)
 	if (state != UTF8_ACCEPT)
 		fprintf(stderr, "malformed UTF-8 sequence\n");
 
+        uint32_t swxdraw = m->width - swxpos;
+
 	pixman_image_composite32(PIXMAN_OP_OVER, swbg, NULL, bar, 0, 0, 0, 0,
-			m->width - swxpos, 0, swxpos, height);
+			swxdraw, 0, swxpos, height);
 	pixman_image_composite32(PIXMAN_OP_OVER, swfg, NULL, bar, 0, 0, 0, 0,
-			m->width - swxpos, 0, swxpos, height);
+			swxdraw, 0, swxpos, height);
 	pixman_image_composite32(PIXMAN_OP_OVER, twbg, NULL, bar, 0, 0, 0, 0,
 			0, 0, m->width - swxpos, height);
 	pixman_image_composite32(PIXMAN_OP_OVER, twfg, NULL, bar, 0, 0, 0, 0,
 			0, 0, m->width - swxpos, height);
+
+        /* We must modify the x and y coordinates of the clickable areas */
+        /* to account for the draw offset of the sub-window. */
+        ClickableArea *entry;
+        for (uint32_t i = 0; i < m->numcas; i++) {
+                entry = &(m->cas[i]);
+                if (!entry->istw) {
+                        entry->fromx = entry->fromx + swxdraw;
+                        entry->tox = entry->tox + swxdraw;
+                }
+        }
 
 	pixman_image_unref(swbg);
 	pixman_image_unref(swfg);
@@ -562,14 +576,14 @@ pointer_handle_enter(void *data, struct wl_pointer *pointer,
 		uint32_t serial, struct wl_surface *surface,
 		wl_fixed_t sx, wl_fixed_t sy)
 {
-	active_wl_surface = surface;
+	activesurface = surface;
 }
 
 static void
 pointer_handle_leave(void *data, struct wl_pointer *pointer,
 		uint32_t serial, struct wl_surface *surface)
 {
-	active_wl_surface = NULL;
+	activesurface = NULL;
 }
 
 static void
@@ -585,26 +599,38 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 		uint32_t serial, uint32_t time, uint32_t button,
 		uint32_t state)
 {
-	if(active_wl_surface && state) {
-		for(uint32_t i=0; i < ca_entry_count; i++) {
-			struct ca_entry entry = ca_entries[i];
-			if(entry.mouse_button == button - BTN_LEFT &&
-					entry.from_x <= mousex && mousex <= entry.to_x &&
-					entry.from_y <= mousey && mousey <= entry.to_y) {
-				FILE *script;
-				script = popen(entry.cmd, "r");
-				if (script != NULL) {
-					while (1) {
-						char *line;
-						char buf[MAX_LINE_LEN];
-						line = fgets(buf, sizeof(buf), script);
-						if (line == NULL) break;
-					}
-				}
-				pclose(script);
-			}
-		}
-	}
+        if (!activesurface || !state)
+                return;
+
+        /* Find the currently active monitor surface */
+        Monitor *activemon = NULL;
+        for (int i = 0; i < nummons; i++) {
+                m = &monitors[i];
+                if (m->wl_surface == activesurface)
+                        activemon = m;
+        }
+
+        if (!activemon)
+                return;
+
+        for (uint32_t i = 0; i < activemon->numcas; i++) {
+                ClickableArea entry = activemon->cas[i];
+                if(entry.button == button - BTN_LEFT &&
+                                entry.fromx <= mousex && mousex <= entry.tox &&
+                                entry.fromy <= mousey && mousey <= entry.toy) {
+                        FILE *script;
+                        script = popen(entry.cmd, "r");
+                        if (script != NULL) {
+                                while (1) {
+                                        char *line;
+                                        char buf[MAX_LINE_LEN];
+                                        line = fgets(buf, sizeof(buf), script);
+                                        if (line == NULL) break;
+                                }
+                        }
+                        pclose(script);
+                }
+        }
 }
 
 static void
