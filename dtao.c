@@ -74,16 +74,15 @@ static int nummons = 0;
 static int exclusive_zone = -1;
 static enum align titlealign, subalign;
 static bool expand;
+static bool firstsetup = true;
 static bool run_display = true;
 static bool cawaiting = false;
 
 static int32_t output = -1;
-static uint32_t height;
+static uint32_t height, layer, anchor;
+static uint32_t savedx = 0, mousex = 0, mousey = 0;
 
-static uint32_t savedx = 0;
-static uint32_t mousex = 0;
-static uint32_t mousey = 0;
-
+static char *namespace = "dtao";
 static struct fcft_font *font;
 static char line[MAX_LINE_LEN];
 static char lastline[MAX_LINE_LEN];
@@ -683,6 +682,26 @@ static const struct wl_seat_listener seat_listener = {
 };
 
 static void
+setupmon(Monitor *m)
+{
+        /* Create layer-shell surface */
+        m->wl_surface = wl_compositor_create_surface(compositor);
+        if (!m->wl_surface)
+                BARF("could not create wl_surface");
+        m->layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell,
+                        m->wl_surface, m->wl_output, layer, namespace);
+        if (!m->layer_surface)
+                BARF("could not create layer_surface");
+        zwlr_layer_surface_v1_add_listener(m->layer_surface,
+                        &layer_surface_listener, m);
+
+        zwlr_layer_surface_v1_set_size(m->layer_surface, m->width, height);
+        zwlr_layer_surface_v1_set_anchor(m->layer_surface, anchor);
+        wl_surface_commit(m->wl_surface);
+        wl_display_roundtrip(display);
+}
+
+static void
 handle_global(void *data, struct wl_registry *registry,
 		uint32_t name, const char *interface, uint32_t version)
 {
@@ -696,6 +715,8 @@ handle_global(void *data, struct wl_registry *registry,
 				&wl_output_interface, 1);
                 if (nummons < MAX_OUTPUT_MONITORS) {
                         monitors[nummons] = (Monitor){.wl_output = o};
+                        if (!firstsetup)
+                                setupmon(&monitors[nummons]);
                         nummons++;
                 }
 	} else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
@@ -708,7 +729,9 @@ handle_global(void *data, struct wl_registry *registry,
 	}
 }
 
-static const struct wl_registry_listener registry_listener = {.global = handle_global,};
+static const struct wl_registry_listener registry_listener = {
+    .global = handle_global,
+};
 
 static void
 read_stdin(void)
@@ -782,11 +805,11 @@ event_loop(void)
 int
 main(int argc, char **argv)
 {
-	char *namespace = "dtao";
 	char *fontstr = "";
 	char *actionstr = "";
-	uint32_t layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
-	uint32_t anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
+
+	layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
+	anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
 			ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
 			ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
 
@@ -861,6 +884,16 @@ main(int argc, char **argv)
 		}
 	}
 
+	/* Load selected font */
+	fcft_set_scaling_filter(FCFT_SCALING_FILTER_LANCZOS3);
+	font = fcft_from_name(1, (const char *[]) {fontstr}, NULL);
+	if (!font)
+		BARF("could not load font");
+
+        /* Set layer size and positioning */
+        if (!height)
+                height = font->ascent + font->descent;
+
 	/* Set up display and protocols */
 	display = wl_display_connect(NULL);
 	if (!display)
@@ -873,35 +906,12 @@ main(int argc, char **argv)
 	if (!compositor || !shm || !layer_shell)
 		BARF("compositor does not support all needed protocols");
 
-	/* Load selected font */
-	fcft_set_scaling_filter(FCFT_SCALING_FILTER_LANCZOS3);
-	font = fcft_from_name(1, (const char *[]) {fontstr}, NULL);
-	if (!font)
-		BARF("could not load font");
-
         for (int i = 0; i < nummons; i++) {
                 m = &monitors[i];
-                /* Create layer-shell surface */
-                m->wl_surface = wl_compositor_create_surface(compositor);
-                if (!m->wl_surface)
-		        BARF("could not create wl_surface");
-                m->layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell,
-                                m->wl_surface, m->wl_output, layer, namespace);
-                if (!m->layer_surface)
-                        BARF("could not create layer_surface");
-                zwlr_layer_surface_v1_add_listener(m->layer_surface,
-                                &layer_surface_listener, m);
-
-                /* Set layer size and positioning */
-                if (!height)
-                        height = font->ascent + font->descent;
-
-                zwlr_layer_surface_v1_set_size(m->layer_surface, m->width, height);
-                zwlr_layer_surface_v1_set_anchor(m->layer_surface, anchor);
-	        wl_surface_commit(m->wl_surface);
-	        wl_display_roundtrip(display);
+                setupmon(m);
         }
 
+        firstsetup = false;
 	event_loop();
 
 	/* Clean everything up */
