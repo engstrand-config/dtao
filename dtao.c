@@ -56,7 +56,7 @@ typedef struct {
         struct wl_buffer *wl_buffer;
         struct zwlr_layer_surface_v1 *layer_surface;
         ClickableArea cas[MAX_CLICKABLE_AREAS];
-        uint32_t width, stride, bufsize, numcas;
+        uint32_t name, width, stride, bufsize, numcas;
 } Monitor;
 
 static struct wl_display *display;
@@ -714,7 +714,10 @@ handle_global(void *data, struct wl_registry *registry,
 		struct wl_output *o = wl_registry_bind(registry, name,
 				&wl_output_interface, 1);
                 if (nummons < MAX_OUTPUT_MONITORS) {
-                        monitors[nummons] = (Monitor){.wl_output = o};
+                        monitors[nummons] = (Monitor){
+                                .wl_output = o,
+                                .name = name
+                        };
                         if (!firstsetup)
                                 setupmon(&monitors[nummons]);
                         nummons++;
@@ -729,8 +732,31 @@ handle_global(void *data, struct wl_registry *registry,
 	}
 }
 
+static void
+handle_global_remove(void *data, struct wl_registry *registry, uint32_t name)
+{
+        bool ismonitor = false;
+        uint32_t newnummons = nummons;
+        Monitor tmpmons[MAX_OUTPUT_MONITORS];
+        for (int i = 0, j = 0; i < nummons; i++) {
+                m = &monitors[i];
+                if (m->name == name) {
+                        ismonitor = true;
+                        newnummons--;
+                        continue;
+                }
+                tmpmons[j] = *m;
+                j++;
+        }
+
+        if (ismonitor)
+                memcpy(&monitors, &tmpmons, sizeof(Monitor) * MAX_OUTPUT_MONITORS);
+                nummons = newnummons;
+}
+
 static const struct wl_registry_listener registry_listener = {
     .global = handle_global,
+    .global_remove = handle_global_remove,
 };
 
 static void
