@@ -28,8 +28,7 @@
 #define VERSION "0.1"
 #define COPYRIGHT "copyright 2021 Devin J. Pohly and dtao team"
 #define USAGE \
-	"usage: dtao [-v] [-p seconds] [-m <v|h>] [-ta <l|c|r>] [-sa <l|c|r>]\n" \
-	"            [-w <pixel>] [-h <pixel>] [-tw <pixel>] [-l <lines>] [-u]\n" \
+	"usage: dtao [-v] [-ta <l|c|r>] [-sa <l|c|r>] [-h <pixel>]\n" \
 	"            [-e <string>] [-fn <font>] [-bg <color>] [-fg <color>]\n" \
 	"            [-expand <l|c|r>] [-z [-z]] [-xs <screen>]"
 
@@ -39,7 +38,7 @@
 #define MAX_CLICKABLE_AREA_CMD_LEN 128
 #define MAX_OUTPUT_MONITORS 8
 
-enum align { ALIGN_C, ALIGN_L, ALIGN_R };
+enum align { ALIGN_UNSET, ALIGN_C, ALIGN_L, ALIGN_R };
 
 typedef struct {
         uint32_t fromx;
@@ -71,10 +70,7 @@ static struct wl_surface *activesurface;
 static Monitor monitors[MAX_OUTPUT_MONITORS];
 
 static Monitor *m;
-static int lines;
-static int persist;
 static int nummons = 0;
-static bool unified;
 static int exclusive_zone = -1;
 static enum align titlealign, subalign;
 static bool expand;
@@ -82,7 +78,7 @@ static bool run_display = true;
 static bool cawaiting = false;
 
 static int32_t output = -1;
-static uint32_t height, titlewidth;
+static uint32_t height;
 
 static uint32_t savedx = 0;
 static uint32_t mousex = 0;
@@ -487,16 +483,40 @@ draw_frame(char *text, Monitor *m)
 	if (state != UTF8_ACCEPT)
 		fprintf(stderr, "malformed UTF-8 sequence\n");
 
-        uint32_t swxdraw = m->width - swxpos;
+        uint32_t swxdraw, twxdraw;
+        switch (titlealign) {
+                case ALIGN_C:
+                        twxdraw = (m->width - twxpos) / 2;
+                        break;
+                case ALIGN_R:
+                        twxdraw = m->width - twxpos;
+                        break;
+                case ALIGN_L:
+                default:
+                        twxdraw = 0;
+                        break;
+        }
+        switch (subalign) {
+                case ALIGN_L:
+                        swxdraw = 0;
+                        break;
+                case ALIGN_C:
+                        swxdraw = (m->width - swxpos) / 2;
+                        break;
+                case ALIGN_R:
+                default:
+                        swxdraw = m->width - swxpos;
+                        break;
+        }
 
 	pixman_image_composite32(PIXMAN_OP_OVER, swbg, NULL, bar, 0, 0, 0, 0,
 			swxdraw, 0, swxpos, height);
 	pixman_image_composite32(PIXMAN_OP_OVER, swfg, NULL, bar, 0, 0, 0, 0,
 			swxdraw, 0, swxpos, height);
 	pixman_image_composite32(PIXMAN_OP_OVER, twbg, NULL, bar, 0, 0, 0, 0,
-			0, 0, m->width - swxpos, height);
+			twxdraw, 0, m->width - twxpos, height);
 	pixman_image_composite32(PIXMAN_OP_OVER, twfg, NULL, bar, 0, 0, 0, 0,
-			0, 0, m->width - swxpos, height);
+			twxdraw, 0, m->width - twxpos, height);
 
         /* We must modify the x and y coordinates of the clickable areas */
         /* to account for the draw offset of the sub-window. */
@@ -783,16 +803,6 @@ main(int argc, char **argv)
 			if (++i >= argc)
 				BARF("option -e requires an argument");
 			actionstr = argv[i];
-		} else if (!strcmp(argv[i], "-expand")) {
-			if (++i >= argc)
-				BARF("option -expand requires an argument");
-			expand = true;
-			if (argv[i][0] == 'l')
-				titlealign = ALIGN_R;
-			else if (argv[i][0] == 'r')
-				titlealign = ALIGN_L;
-			else if (argv[i][0] == 'c')
-				titlealign = ALIGN_C;
 		} else if (!strcmp(argv[i], "-fg")) {
 			if (++i >= argc)
 				BARF("option -fg requires an argument");
@@ -806,10 +816,6 @@ main(int argc, char **argv)
 			if (++i >= argc)
 				BARF("option -h requires an argument");
 			height = atoi(argv[i]);
-		} else if (!strcmp(argv[i], "-l")) {
-			if (++i >= argc)
-				BARF("option -l requires an argument");
-			lines = atoi(argv[i]);
 		} else if (!strcmp(argv[i], "-L")) {
 			if (++i >= argc)
 				BARF("option -L requires an argument");
@@ -821,37 +827,24 @@ main(int argc, char **argv)
 				layer = ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
 			else
 				layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
-		} else if (!strcmp(argv[i], "-p")) {
-			if (++i >= argc)
-				BARF("option -p requires an argument");
-			persist = atoi(argv[i]);
 		} else if (!strcmp(argv[i], "-sa")) {
 			if (++i >= argc)
 				BARF("option -sa requires an argument");
 			if (argv[i][0] == 'l')
 				subalign = ALIGN_L;
-			else if (argv[i][0] == 'r')
-				subalign = ALIGN_R;
-			else
+			else if (argv[i][0] == 'c')
 				subalign = ALIGN_C;
+			else
+				subalign = ALIGN_R;
 		} else if (!strcmp(argv[i], "-ta")) {
 			if (++i >= argc)
 				BARF("option -ta requires an argument");
-			/* Expand overrides alignment */
-			if (!expand) {
-				if (argv[i][0] == 'l')
-					titlealign = ALIGN_L;
-				else if (argv[i][0] == 'r')
-					titlealign = ALIGN_R;
-				else
-					titlealign = ALIGN_C;
-			}
-		} else if (!strcmp(argv[i], "-tw")) {
-			if (++i >= argc)
-				BARF("option -tw requires an argument");
-			titlewidth = atoi(argv[i]);
-		} else if (!strcmp(argv[i], "-u")) {
-			unified = 1;
+                        if (argv[i][0] == 'l')
+                                titlealign = ALIGN_L;
+                        else if (argv[i][0] == 'c')
+                                titlealign = ALIGN_C;
+                        else
+                                titlealign = ALIGN_R;
 		} else if (!strcmp(argv[i], "-v")) {
 			fprintf(stderr, PROGRAM " " VERSION ", " COPYRIGHT "\n");
 			return 0;

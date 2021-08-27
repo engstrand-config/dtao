@@ -22,9 +22,6 @@ dtao(1) -- general-purpose status, messaging, and notification bar for Wayland
 * `-e` <STRING>:
     define actions
 
-* `-expand` {`l`|`r`}:
-    dynamically adjust left/right side of title window to fit text
-
 * `-fg` <COLOR>:
     set default foreground color
 
@@ -34,29 +31,14 @@ dtao(1) -- general-purpose status, messaging, and notification bar for Wayland
 * `-h` <PIXEL>:
     set window height
 
-* `-l` <LINES>:
-    number of lines in the sub-window
-
 * `-L` {`o`|`t`|`b`|`u`}
     draw the bar in the overlay, top (default), bottom, or underlay/background layer
-
-* `-p` <SEC>:
-    persist for <SEC> seconds after EOF on stdin, 0 for indefinitely
 
 * `-sa` {`l`|`c`|`r`}:
     set alignment for sub-window
 
 * `-ta` {`l`|`c`|`r`}:
     set alignment for title window
-
-* `-tw` <PIXEL>:
-    set title window width
-
-* `-u`:
-    wrap to title-window after sub-window fills
-
-* `-w` <PIXEL>:
-    set window width
 
 * `-xs` <NUM>:
     display on output number <NUM>
