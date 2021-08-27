@@ -280,6 +280,7 @@ parse_clickable_area(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, bool
 		entry->fromy = *ypos;
 		entry->tox = 0;
 		entry->toy = 0;
+                entry->button = button;
 
                 /* Keep track of the buffer in which the clickable entry is drawn */
                 entry->istw = istw;
@@ -635,7 +636,7 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 
         for (uint32_t i = 0; i < activemon->numcas; i++) {
                 ClickableArea entry = activemon->cas[i];
-                if(entry.button == button - BTN_LEFT &&
+                if (entry.button == button - BTN_MOUSE &&
                                 entry.fromx <= mousex && mousex <= entry.tox &&
                                 entry.fromy <= mousey && mousey <= entry.toy) {
                         FILE *script;
