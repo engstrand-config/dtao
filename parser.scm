@@ -10,6 +10,12 @@
     (close-pipe port)
     (string-append "^ca(0,notify-send \"Hello world\")" result "^ca()")))
 
+(define (%block-battery info)
+  (let* ((port (open-input-file "/sys/class/power_supply/BAT0/capacity"))
+         (result (read-line port)))
+    (close-port port)
+    (string-append "^fg(#00FF00)"result "%")))
+
 (define (%block-tags info)
   (let ((selected '(1)))
     (string-join
@@ -32,20 +38,21 @@
 
 (define %user-blocks
   (list
-    %block-time))
+    %block-time
+    %block-battery))
 
 (define %compositor-blocks
   (list
     %block-title))
 
 (define read-port (current-input-port))
-(define write-port (open-output-pipe "dtao -z -z -L u -fn \"JetBrains Mono:style=bold:size=12\""))
+(define write-port (open-output-pipe "dtao -L b -bg 222222 -fg FFFFFF -z -z -fn \"JetBrains Mono:style=bold:size=12\""))
 
 (define (update-blocks status-info blocks)
   (fold (lambda (block acc)
           (let ((str (block status-info)))
             (if (string? str)
-                (string-append acc str)
+                (string-append acc " " str)
                 acc)))
         ""
         blocks))
