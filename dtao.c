@@ -30,7 +30,7 @@
 #define USAGE \
 	"usage: dtao [-v] [-ta <l|c|r>] [-sa <l|c|r>] [-h <pixel>]\n" \
 	"            [-e <string>] [-fn <font>] [-bg <color>] [-fg <color>]\n" \
-	"            [-expand <l|c|r>] [-z [-z]] [-xs <screen>]"
+	"            [-o] [-z [-z]] [-xs <screen>]"
 
 /* Includes the newline character */
 #define MAX_LINE_LEN 8192
@@ -73,10 +73,10 @@ static Monitor *m;
 static int nummons = 0;
 static int exclusive_zone = -1;
 static enum align titlealign, subalign;
-static bool expand;
 static bool firstsetup = true;
 static bool run_display = true;
 static bool cawaiting = false;
+static bool overlay = false;
 
 static int32_t output = -1;
 static uint32_t height, layer, anchor;
@@ -372,10 +372,9 @@ draw_frame(char *text, Monitor *m)
 	/* Pixman image corresponding to main buffer */
 	pixman_image_t *bar = pixman_image_create_bits(PIXMAN_a8r8g8b8,
 			m->width, height, data, m->width * 4);
-	/* Fill bar with background color if bar should extend beyond text */
-	if (!expand)
-		pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
-				&(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
+        if (!overlay)
+                pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
+                                &(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
 
         /* Sub-window layers */
 	pixman_image_t *swbg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
@@ -508,14 +507,20 @@ draw_frame(char *text, Monitor *m)
                         break;
         }
 
+        if (overlay)
+                pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
+                                &(pixman_box32_t) {.x1 = m->width - swxpos, .x2 = m->width, .y1 = 0, .y2 = height});
+
 	pixman_image_composite32(PIXMAN_OP_OVER, swbg, NULL, bar, 0, 0, 0, 0,
 			swxdraw, 0, swxpos, height);
 	pixman_image_composite32(PIXMAN_OP_OVER, swfg, NULL, bar, 0, 0, 0, 0,
 			swxdraw, 0, swxpos, height);
-	pixman_image_composite32(PIXMAN_OP_OVER, twbg, NULL, bar, 0, 0, 0, 0,
-			twxdraw, 0, m->width - twxpos, height);
-	pixman_image_composite32(PIXMAN_OP_OVER, twfg, NULL, bar, 0, 0, 0, 0,
-			twxdraw, 0, m->width - twxpos, height);
+        if (!overlay) {
+                pixman_image_composite32(PIXMAN_OP_OVER, twbg, NULL, bar, 0, 0, 0, 0,
+                                twxdraw, 0, m->width - twxpos, height);
+                pixman_image_composite32(PIXMAN_OP_OVER, twfg, NULL, bar, 0, 0, 0, 0,
+                                twxdraw, 0, m->width - twxpos, height);
+        }
 
         /* We must modify the x and y coordinates of the clickable areas */
         /* to account for the draw offset of the sub-window. */
@@ -761,7 +766,6 @@ static const struct wl_registry_listener registry_listener = {
 static void
 read_stdin(void)
 {
-
 	/* Read as much data as we can into line buffer */
 	ssize_t b = read(STDIN_FILENO, line + linerem, MAX_LINE_LEN - linerem);
 	if (b < 0)
@@ -904,10 +908,15 @@ main(int argc, char **argv)
 			output = atoi(argv[i]) - 1;
 		} else if (!strcmp(argv[i], "-z")) {
 			exclusive_zone++;
+                } else if (!strcmp(argv[i], "-o")) {
+                        overlay = true;
 		} else {
 			BARF("option '%s' not recognized\n%s", argv[i], USAGE);
 		}
 	}
+
+        if (overlay)
+		layer = ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY;
 
 	/* Load selected font */
 	fcft_set_scaling_filter(FCFT_SCALING_FILTER_LANCZOS3);

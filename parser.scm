@@ -46,7 +46,7 @@
     %block-title))
 
 (define read-port (current-input-port))
-(define write-port (open-output-pipe "dtao -L b -bg 222222 -fg FFFFFF -z -z -fn \"JetBrains Mono:style=bold:size=12\""))
+(define write-port (open-output-pipe "dtao -bg 222222 -fg FFFFFF -z -z -fn \"JetBrains Mono:style=bold:size=12\""))
 
 (define (update-blocks status-info blocks)
   (fold (lambda (block acc)
