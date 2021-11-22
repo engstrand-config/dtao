@@ -917,7 +917,7 @@ main(int argc, char **argv)
 
         /* Set layer size and positioning */
         if (!height)
-                height = font->ascent + font->descent;
+                height = font->height + font->descent;
 
 	/* Set up display and protocols */
 	display = wl_display_connect(NULL);
