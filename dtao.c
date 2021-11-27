@@ -79,6 +79,7 @@ static bool cawaiting = false;
 static bool overlay = false;
 static bool adjust_width = false;
 static uint32_t window_margin = 0;
+static uint32_t border_width = 0;
 
 static int32_t output = -1;
 static uint32_t height, layer, anchor;
@@ -91,6 +92,12 @@ static char lastline[MAX_LINE_LEN];
 static int linerem;
 static bool eat_line = false;
 static pixman_color_t
+	bordercolor = {
+		.red = 0xffff,
+		.green = 0x0000,
+		.blue = 0x0000,
+		.alpha = 0xffff,
+	},
 	bgcolor = {
 		.red = 0x1111,
 		.green = 0x1111,
@@ -395,7 +402,7 @@ draw_frame(char *text, Monitor *m)
 
         uint32_t twxpos = 0, swxpos = 0, twypos, swypos;
 	/* start drawing at center-left (ypos sets the text baseline) */
-        twypos = swypos = (height + font->ascent - font->descent) / 2;
+        twypos = swypos = (height + border_width + font->ascent - font->descent) / 2;
 
         /* Draw in sub-window layer by default */
 	uint32_t *xpos = &swxpos;
@@ -470,7 +477,7 @@ draw_frame(char *text, Monitor *m)
 					&textbgcolor, 1, &(pixman_box32_t){
 						.x1 = *xpos,
 						.x2 = MIN(*xpos + glyph->advance.x, m->width),
-						.y1 = 0,
+						.y1 = border_width,
 						.y2 = height,
 					});
 		}
@@ -525,9 +532,32 @@ draw_frame(char *text, Monitor *m)
 
         }
 
-        if (adjust_width && window_margin != 0)
+        if (adjust_width && window_margin != 0) {
+                uint32_t bar_width = total_width;
+
+                if (window_margin != 0)
+                        bar_width = total_width + twxdraw;
+
+                if (border_width != 0)
+                        /* Render border rectangle first */
+                        pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bordercolor, 1,
+                                        &(pixman_box32_t) {
+                                            .x1 = twxdraw - border_width,
+                                            .x2 = bar_width + border_width,
+                                            .y1 = 0,
+                                            .y2 = height
+                                        });
+
+                /* Render background to fill space between title- and subwindow */
                 pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
-                                &(pixman_box32_t) {.x1 = twxdraw, .x2 = total_width + twxdraw, .y1 = 0, .y2 = height});
+                                &(pixman_box32_t) {
+                                    .x1 = twxdraw,
+                                    .x2 = bar_width,
+                                    .y1 = border_width,
+                                    .y2 = height
+                                });
+        }
+
 
 	pixman_image_composite32(PIXMAN_OP_OVER, swbg, NULL, bar, 0, 0, 0, 0,
 			swxdraw, 0, swxpos, height);
@@ -934,6 +964,15 @@ main(int argc, char **argv)
                         if (++i >= argc)
                                 BARF("option -wm requires an argument");
                         window_margin = atoi(argv[i]);
+                } else if (!strcmp(argv[i], "-bw")) {
+                        if (++i >= argc)
+                                BARF("option -bw requires an argument");
+                        border_width = atoi(argv[i]);
+                } else if (!strcmp(argv[i], "-bc")) {
+			if (++i >= argc)
+				BARF("option -bc requires an argument");
+			if (parse_color(argv[i], &bordercolor))
+				BARF("malformed color string for -bc");
 		} else {
 			BARF("option '%s' not recognized\n%s", argv[i], USAGE);
 		}
@@ -950,7 +989,7 @@ main(int argc, char **argv)
 
         /* Set layer size and positioning */
         if (!height)
-                height = font->height + font->descent;
+                height = font->height + font->descent + border_width;
 
 	/* Set up display and protocols */
 	display = wl_display_connect(NULL);
