@@ -78,6 +78,7 @@ static bool run_display = true;
 static bool cawaiting = false;
 static bool overlay = false;
 static bool adjust_width = false;
+static bool is_bottom = false;
 static uint32_t window_margin = 0;
 static uint32_t border_width = 0;
 
@@ -400,9 +401,11 @@ draw_frame(char *text, Monitor *m)
 
 	pixman_image_t *fgfill = pixman_image_create_solid_fill(&textfgcolor);
 
+        uint32_t yoffset = is_bottom ? border_width : 0;
+        uint32_t heightoffset = is_bottom ? 0 : border_width;
         uint32_t twxpos = 0, swxpos = 0, twypos, swypos;
 	/* start drawing at center-left (ypos sets the text baseline) */
-        twypos = swypos = (height + border_width + font->ascent - font->descent) / 2;
+        twypos = swypos = (height + heightoffset + font->ascent - font->descent) / 2;
 
         /* Draw in sub-window layer by default */
 	uint32_t *xpos = &swxpos;
@@ -477,8 +480,8 @@ draw_frame(char *text, Monitor *m)
 					&textbgcolor, 1, &(pixman_box32_t){
 						.x1 = *xpos,
 						.x2 = MIN(*xpos + glyph->advance.x, m->width),
-						.y1 = border_width,
-						.y2 = height,
+						.y1 = yoffset,
+						.y2 = height - heightoffset,
 					});
 		}
 
@@ -553,8 +556,8 @@ draw_frame(char *text, Monitor *m)
                                 &(pixman_box32_t) {
                                     .x1 = twxdraw,
                                     .x2 = bar_width,
-                                    .y1 = border_width,
-                                    .y2 = height
+                                    .y1 = yoffset,
+                                    .y2 = height - heightoffset
                                 });
         }
 
@@ -893,6 +896,7 @@ main(int argc, char **argv)
 	/* Parse options */
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "-b")) {
+                        is_bottom = true;
 			anchor ^= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
 				ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
 		} else if (!strcmp(argv[i], "-bg")) {
