@@ -30,7 +30,7 @@
 #define USAGE \
 	"usage: dtao [-v] [-ta <l|c|r>] [-sa <l|c|r>] [-h <pixel>]\n" \
 	"            [-e <string>] [-fn <font>] [-bg <color>] [-fg <color>]\n" \
-	"            [-o] [-z [-z]] [-xs <screen>]"
+	"            [-o] [-a] [-wm <margin>] [-z [-z]] [-xs <screen>]"
 
 /* Includes the newline character */
 #define MAX_LINE_LEN 8192
@@ -77,6 +77,8 @@ static bool firstsetup = true;
 static bool run_display = true;
 static bool cawaiting = false;
 static bool overlay = false;
+static bool adjust_width = false;
+static uint32_t window_margin = 0;
 
 static int32_t output = -1;
 static uint32_t height, layer, anchor;
@@ -372,7 +374,8 @@ draw_frame(char *text, Monitor *m)
 	/* Pixman image corresponding to main buffer */
 	pixman_image_t *bar = pixman_image_create_bits(PIXMAN_a8r8g8b8,
 			m->width, height, data, m->width * 4);
-        if (!overlay)
+
+        if (!overlay && !adjust_width)
                 pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
                                 &(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
 
@@ -482,34 +485,49 @@ draw_frame(char *text, Monitor *m)
 		fprintf(stderr, "malformed UTF-8 sequence\n");
 
         uint32_t swxdraw, twxdraw;
-        switch (titlealign) {
-                case ALIGN_C:
-                        twxdraw = (m->width - twxpos) / 2;
-                        break;
-                case ALIGN_R:
-                        twxdraw = m->width - twxpos;
-                        break;
-                case ALIGN_L:
-                default:
-                        twxdraw = 0;
-                        break;
-        }
-        switch (subalign) {
-                case ALIGN_L:
-                        swxdraw = 0;
-                        break;
-                case ALIGN_C:
-                        swxdraw = (m->width - swxpos) / 2;
-                        break;
-                case ALIGN_R:
-                default:
-                        swxdraw = m->width - swxpos;
-                        break;
+        uint32_t total_width = twxpos + swxpos;
+
+        if (!adjust_width) {
+            switch (titlealign) {
+                    case ALIGN_C:
+                            twxdraw = (m->width - twxpos) / 2;
+                            break;
+                    case ALIGN_R:
+                            twxdraw = m->width - twxpos;
+                            break;
+                    case ALIGN_L:
+                    default:
+                            twxdraw = 0;
+                            break;
+            }
+            switch (subalign) {
+                    case ALIGN_L:
+                            swxdraw = 0;
+                            break;
+                    case ALIGN_C:
+                            swxdraw = (m->width - swxpos) / 2;
+                            break;
+                    case ALIGN_R:
+                    default:
+                            swxdraw = m->width - swxpos;
+                            break;
+            }
+        } else {
+            swxdraw = 0;
+
+            if (window_margin != 0) {
+                total_width += window_margin;
+                swxdraw = window_margin;
+            }
+
+            twxdraw = (m->width - total_width) / 2;
+            swxdraw += twxdraw + twxpos;
+
         }
 
-        if (overlay)
+        if (adjust_width && window_margin != 0)
                 pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
-                                &(pixman_box32_t) {.x1 = m->width - swxpos, .x2 = m->width, .y1 = 0, .y2 = height});
+                                &(pixman_box32_t) {.x1 = twxdraw, .x2 = total_width + twxdraw, .y1 = 0, .y2 = height});
 
 	pixman_image_composite32(PIXMAN_OP_OVER, swbg, NULL, bar, 0, 0, 0, 0,
 			swxdraw, 0, swxpos, height);
@@ -910,6 +928,12 @@ main(int argc, char **argv)
 			exclusive_zone++;
                 } else if (!strcmp(argv[i], "-o")) {
                         overlay = true;
+                } else if (!strcmp(argv[i], "-a")) {
+                        adjust_width = true;
+                } else if (!strcmp(argv[i], "-wm")) {
+                        if (++i >= argc)
+                                BARF("option -wm requires an argument");
+                        window_margin = atoi(argv[i]);
 		} else {
 			BARF("option '%s' not recognized\n%s", argv[i], USAGE);
 		}

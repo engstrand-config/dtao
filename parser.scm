@@ -5,7 +5,7 @@
              (srfi srfi-1))
 
 (define (%block-time info)
-  (let* ((port (open-input-pipe "date"))
+  (let* ((port (open-input-pipe "date \"+%a %d %b (v.%V) %T \""))
          (result (read-line port)))
     (close-pipe port)
     (string-append "^ca(0,notify-send \"Hello world\")" result "^ca()")))
@@ -38,15 +38,14 @@
 
 (define %user-blocks
   (list
-    %block-time
-    %block-battery))
+    %block-time))
 
 (define %compositor-blocks
   (list
     %block-title))
 
 (define read-port (current-input-port))
-(define write-port (open-output-pipe "dtao -bg 222222 -fg FFFFFF -z -z -fn \"JetBrains Mono:style=bold:size=12\""))
+(define write-port (open-output-pipe "dtao -wm 100 -a -b -sa c -bg 222222 -fg FFFFFF -z -z -fn \"JetBrains Mono:style=bold:size=13\""))
 
 (define (update-blocks status-info blocks)
   (fold (lambda (block acc)
