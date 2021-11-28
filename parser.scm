@@ -21,13 +21,15 @@
     (string-join
       (map
         (lambda (t)
-          (format #f "~a ~a ~a~a"
-                  (if (member t selected) "^bg(#ffffff)^fg(#000000)" "")
+          (format #f "~a ~a ~a"
+                  (if (member t selected) "^bg(#005577AA)^fg(#FFFFFF)" "")
                   (number->string t)
-                  (if (member t selected) "^bg()^fg()" "")
-                  "^p(1)"))
+                  (if (member t selected) "^bg()^fg()" "")))
         (iota 9 1))
       "")))
+
+(define (%block-gibberish info)
+  "BREAKING NEWS: Fredrik fuckade upp igen")
 
 (define (%block-title info)
   (unless (null? info)
@@ -45,7 +47,7 @@
     %block-title))
 
 (define read-port (current-input-port))
-(define write-port (open-output-pipe "dtao -wm 100 -a -b -sa c -bg 222222 -fg FFFFFF -z -z -fn \"JetBrains Mono:style=bold:size=13\""))
+(define write-port (open-output-pipe "dtao -a -ta l -sa c -fg FFFFFF -z -z -fn \"JetBrains Mono:style=bold:size=13\""))
 
 (define (update-blocks status-info blocks)
   (fold (lambda (block acc)
@@ -86,7 +88,7 @@
              (user-output (update-user-blocks %user-blocks iteration)))
         (unless (and (eq? previous-user-output user-output)
                      (eq? previous-base-output base-output))
-          (display (string-append "^tw()" (%block-tags '()) base-output
+          (display (string-append "^tw()" (%block-tags '())
                                   "^sw()" user-output "\n")
                    write-port))
         (sleep 1)

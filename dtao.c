@@ -30,7 +30,7 @@
 #define USAGE \
 	"usage: dtao [-v] [-ta <l|c|r>] [-sa <l|c|r>] [-h <pixel>]\n" \
 	"            [-e <string>] [-fn <font>] [-bg <color>] [-fg <color>]\n" \
-	"            [-o] [-a] [-wm <margin>] [-z [-z]] [-xs <screen>]"
+	"            [-a] [-z [-z]] [-xs <screen>]"
 
 /* Includes the newline character */
 #define MAX_LINE_LEN 8192
@@ -76,7 +76,6 @@ static enum align titlealign, subalign;
 static bool firstsetup = true;
 static bool run_display = true;
 static bool cawaiting = false;
-static bool overlay = false;
 static bool adjust_width = false;
 static bool is_bottom = false;
 static uint32_t window_margin = 0;
@@ -103,7 +102,7 @@ static pixman_color_t
 		.red = 0x1111,
 		.green = 0x1111,
 		.blue = 0x1111,
-		.alpha = 0xffff,
+		.alpha = 0x0000,
 	},
 	fgcolor = {
 		.red = 0xb3b3,
@@ -314,17 +313,15 @@ handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
 	*end = '\0';
 
 	if (!strcmp(cmd, "bg")) {
-		if (!*arg) {
+		if (!*arg)
 			*bg = bgcolor;
-		} else if (parse_color(arg, bg)) {
+		else if (parse_color(arg, bg))
 			fprintf(stderr, "Bad color string \"%s\"\n", arg);
-		}
 	} else if (!strcmp(cmd, "fg")) {
-		if (!*arg) {
+		if (!*arg)
 			*fg = fgcolor;
-		} else if (parse_color(arg, fg)) {
+		else if (parse_color(arg, fg))
 			fprintf(stderr, "Bad color string \"%s\"\n", arg);
-		}
 	} else if (!strcmp(cmd, "pa")) {
 		if (parse_movement(arg, m, xpos, ypos, 0, 0))
 			fprintf(stderr, "Invalid absolute position argument \"%s\"\n", arg);
@@ -383,7 +380,7 @@ draw_frame(char *text, Monitor *m)
 	pixman_image_t *bar = pixman_image_create_bits(PIXMAN_a8r8g8b8,
 			m->width, height, data, m->width * 4);
 
-        if (!overlay && !adjust_width)
+        if (!adjust_width)
                 pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
                                 &(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
 
@@ -476,13 +473,14 @@ draw_frame(char *text, Monitor *m)
 		}
 
 		if (*xpos < m->width) {
-			pixman_image_fill_boxes(PIXMAN_OP_OVER, bglayer,
-					&textbgcolor, 1, &(pixman_box32_t){
-						.x1 = *xpos,
-						.x2 = MIN(*xpos + glyph->advance.x, m->width),
-						.y1 = yoffset,
-						.y2 = height - heightoffset,
-					});
+                        if (textbgcolor.alpha != 0x0000)
+                                pixman_image_fill_boxes(PIXMAN_OP_OVER, bglayer,
+                                                &textbgcolor, 1, &(pixman_box32_t){
+                                                        .x1 = *xpos,
+                                                        .x2 = MIN(*xpos + glyph->advance.x, m->width),
+                                                        .y1 = yoffset,
+                                                        .y2 = height - heightoffset,
+                                                });
 		}
 
 		/* increment pen position */
@@ -497,81 +495,40 @@ draw_frame(char *text, Monitor *m)
         uint32_t swxdraw, twxdraw;
         uint32_t total_width = twxpos + swxpos;
 
-        if (!adjust_width) {
-            switch (titlealign) {
-                    case ALIGN_C:
-                            twxdraw = (m->width - twxpos) / 2;
-                            break;
-                    case ALIGN_R:
-                            twxdraw = m->width - twxpos;
-                            break;
-                    case ALIGN_L:
-                    default:
-                            twxdraw = 0;
-                            break;
-            }
-            switch (subalign) {
-                    case ALIGN_L:
-                            swxdraw = 0;
-                            break;
-                    case ALIGN_C:
-                            swxdraw = (m->width - swxpos) / 2;
-                            break;
-                    case ALIGN_R:
-                    default:
-                            swxdraw = m->width - swxpos;
-                            break;
-            }
-        } else {
-            swxdraw = 0;
-
-            if (window_margin != 0) {
-                total_width += window_margin;
-                swxdraw = window_margin;
-            }
-
-            twxdraw = (m->width - total_width) / 2;
-            swxdraw += twxdraw + twxpos;
-
+        switch (titlealign) {
+                case ALIGN_C:
+                        twxdraw = (m->width - twxpos) / 2;
+                        break;
+                case ALIGN_R:
+                        twxdraw = m->width - twxpos;
+                        break;
+                case ALIGN_L:
+                default:
+                        twxdraw = 0;
+                        break;
         }
-
-        if (adjust_width && window_margin != 0) {
-                uint32_t bar_width = total_width;
-
-                if (window_margin != 0)
-                        bar_width = total_width + twxdraw;
-
-                if (border_width != 0)
-                        /* Render border rectangle first */
-                        pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bordercolor, 1,
-                                        &(pixman_box32_t) {
-                                            .x1 = twxdraw - border_width,
-                                            .x2 = bar_width + border_width,
-                                            .y1 = 0,
-                                            .y2 = height
-                                        });
-
-                /* Render background to fill space between title- and subwindow */
-                pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
-                                &(pixman_box32_t) {
-                                    .x1 = twxdraw,
-                                    .x2 = bar_width,
-                                    .y1 = yoffset,
-                                    .y2 = height - heightoffset
-                                });
+        switch (subalign) {
+                case ALIGN_L:
+                        swxdraw = 0;
+                        break;
+                case ALIGN_C:
+                        swxdraw = (m->width - swxpos) / 2;
+                        break;
+                case ALIGN_R:
+                default:
+                        swxdraw = m->width - swxpos;
+                        break;
         }
-
 
 	pixman_image_composite32(PIXMAN_OP_OVER, swbg, NULL, bar, 0, 0, 0, 0,
 			swxdraw, 0, swxpos, height);
+        pixman_image_composite32(PIXMAN_OP_OVER, twbg, NULL, bar, 0, 0, 0, 0,
+                        twxdraw, 0, m->width - twxpos, height);
+
 	pixman_image_composite32(PIXMAN_OP_OVER, swfg, NULL, bar, 0, 0, 0, 0,
 			swxdraw, 0, swxpos, height);
-        if (!overlay) {
-                pixman_image_composite32(PIXMAN_OP_OVER, twbg, NULL, bar, 0, 0, 0, 0,
-                                twxdraw, 0, m->width - twxpos, height);
-                pixman_image_composite32(PIXMAN_OP_OVER, twfg, NULL, bar, 0, 0, 0, 0,
-                                twxdraw, 0, m->width - twxpos, height);
-        }
+        pixman_image_composite32(PIXMAN_OP_OVER, twfg, NULL, bar, 0, 0, 0, 0,
+                        twxdraw, 0, m->width - twxpos, height);
 
         /* We must modify the x and y coordinates of the clickable areas */
         /* to account for the draw offset of the sub-window. */
@@ -960,14 +917,8 @@ main(int argc, char **argv)
 			output = atoi(argv[i]) - 1;
 		} else if (!strcmp(argv[i], "-z")) {
 			exclusive_zone++;
-                } else if (!strcmp(argv[i], "-o")) {
-                        overlay = true;
                 } else if (!strcmp(argv[i], "-a")) {
                         adjust_width = true;
-                } else if (!strcmp(argv[i], "-wm")) {
-                        if (++i >= argc)
-                                BARF("option -wm requires an argument");
-                        window_margin = atoi(argv[i]);
                 } else if (!strcmp(argv[i], "-bw")) {
                         if (++i >= argc)
                                 BARF("option -bw requires an argument");
@@ -981,9 +932,6 @@ main(int argc, char **argv)
 			BARF("option '%s' not recognized\n%s", argv[i], USAGE);
 		}
 	}
-
-        if (overlay)
-		layer = ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY;
 
 	/* Load selected font */
 	fcft_set_scaling_filter(FCFT_SCALING_FILTER_LANCZOS3);
