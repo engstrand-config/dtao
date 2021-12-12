@@ -39,10 +39,20 @@ wlr-layer-shell-unstable-v1-protocol.c:
 
 wlr-layer-shell-unstable-v1-protocol.o: wlr-layer-shell-unstable-v1-protocol.h
 
-dtao.o: utf8.h xdg-shell-protocol.h wlr-layer-shell-unstable-v1-protocol.h
+dscm-unstable-v1-protocol.h:
+	$(WAYLAND_SCANNER) client-header \
+		protocols/dscm-unstable-v1.xml $@
+
+dscm-unstable-v1-protocol.c:
+	$(WAYLAND_SCANNER) private-code \
+		protocols/dscm-unstable-v1.xml $@
+
+dscm-unstable-v1-protocol.o: dscm-unstable-v1-protocol.h
+
+dtao.o: utf8.h xdg-shell-protocol.h wlr-layer-shell-unstable-v1-protocol.h dscm-unstable-v1-protocol.h
 
 # Protocol dependencies
-dtao: xdg-shell-protocol.o wlr-layer-shell-unstable-v1-protocol.o
+dtao: xdg-shell-protocol.o wlr-layer-shell-unstable-v1-protocol.o dscm-unstable-v1-protocol.o
 
 # Library dependencies
 dtao: CFLAGS+=$(shell pkg-config --cflags wayland-client fcft pixman-1)

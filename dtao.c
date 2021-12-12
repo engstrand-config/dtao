@@ -17,6 +17,7 @@
 #include <linux/input.h>
 #include "utf8.h"
 #include "wlr-layer-shell-unstable-v1-protocol.h"
+#include "dscm-unstable-v1-protocol.h"
 #include "xdg-shell-protocol.h"
 
 #define BARF(fmt, ...)		do { fprintf(stderr, fmt "\n", ##__VA_ARGS__); exit(EXIT_FAILURE); } while (0)
@@ -63,6 +64,7 @@ static struct wl_display *display;
 static struct wl_compositor *compositor;
 static struct wl_shm *shm;
 static struct zwlr_layer_shell_v1 *layer_shell;
+static struct dscm_v1 *dscm;
 
 struct wl_seat *seat = NULL;
 
@@ -78,7 +80,6 @@ static bool run_display = true;
 static bool cawaiting = false;
 static bool adjust_width = false;
 static bool is_bottom = false;
-static uint32_t window_margin = 0;
 static uint32_t border_width = 0;
 
 static int32_t output = -1;
@@ -493,7 +494,6 @@ draw_frame(char *text, Monitor *m)
 		fprintf(stderr, "malformed UTF-8 sequence\n");
 
         uint32_t swxdraw, twxdraw;
-        uint32_t total_width = twxpos + swxpos;
 
         switch (titlealign) {
                 case ALIGN_C:
@@ -694,6 +694,70 @@ static const struct wl_seat_listener seat_listener = {
 };
 
 static void
+dscm_tag(void *data, struct dscm_v1 *d, const char *name)
+{
+        printf("got tag\n");
+}
+
+static void
+dscm_layout(void *data, struct dscm_v1 *d, const char *name)
+{
+        printf("got layout\n");
+}
+
+static void
+dscm_colorscheme(void *data, struct dscm_v1 *d, struct wl_array *root,
+        struct wl_array *border, struct wl_array *focus)
+{
+        printf("got colorscheme\n");
+}
+
+static const struct dscm_v1_listener dscm_listener = {
+	.tag = dscm_tag,
+	.layout = dscm_layout,
+	.colorscheme = dscm_colorscheme,
+};
+
+/* static void */
+/* dscm_monitor_tag(void *data, struct dscm_monitor_v1 *mon, uint32_t index, */
+/*         enum dscm_monitor_v1_tag_state state, uint32_t numclients, uint32_t focusedclient) */
+/* { */
+
+/* } */
+
+/* static void */
+/* dscm_monitor_layout(void *data, struct dscm_monitor_v1 *mon, uint32_t index) */
+/* { */
+
+/* } */
+
+/* static void */
+/* dscm_monitor_selected(void *data, struct dscm_monitor_v1 *mon, uint32_t selected) */
+/* { */
+
+/* } */
+
+/* static void */
+/* dscm_monitor_title(void *data, struct dscm_monitor_v1 *mon, char *title) */
+/* { */
+
+/* } */
+
+/* static void */
+/* dscm_monitor_frame(void *data, struct dscm_monitor_v1 *mon) */
+/* { */
+
+/* } */
+
+/* static const struct dscm_monitor_v1_listener dscm_monitor_listener = { */
+/*     .tag = dscm_monitor_tag, */
+/*     .layout = dscm_monitor_layout, */
+/*     .selected = dscm_monitor_selected, */
+/*     .title = dscm_monitor_title, */
+/*     .frame = dscm_monitor_frame, */
+/* }; */
+
+static void
 setupmon(Monitor *m)
 {
         /* Create layer-shell surface */
@@ -737,9 +801,13 @@ handle_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
 		layer_shell = wl_registry_bind(registry, name,
 				&zwlr_layer_shell_v1_interface, 1);
+	} else if (strcmp(interface, dscm_v1_interface.name) == 0) {
+		dscm = wl_registry_bind(registry, name,
+				&dscm_v1_interface, 1);
+                dscm_v1_add_listener(dscm, &dscm_listener, NULL);
 	} else if (strcmp(interface, wl_seat_interface.name) == 0) {
     		seat = wl_registry_bind(registry, name,
-					&wl_seat_interface, 1);
+				&wl_seat_interface, 1);
 		wl_seat_add_listener(seat, &seat_listener, NULL);
 	}
 }
@@ -763,7 +831,7 @@ handle_global_remove(void *data, struct wl_registry *registry, uint32_t name)
 
         if (ismonitor)
                 memcpy(&monitors, &tmpmons, sizeof(Monitor) * MAX_OUTPUT_MONITORS);
-                nummons = newnummons;
+        nummons = newnummons;
 }
 
 static const struct wl_registry_listener registry_listener = {
@@ -843,7 +911,6 @@ int
 main(int argc, char **argv)
 {
 	char *fontstr = "";
-	char *actionstr = "";
 
 	layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
 	anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
@@ -861,10 +928,6 @@ main(int argc, char **argv)
 				BARF("option -bg requires an argument");
 			if (parse_color(argv[i], &bgcolor))
 				BARF("malformed color string for -bg");
-		} else if (!strcmp(argv[i], "-e")) {
-			if (++i >= argc)
-				BARF("option -e requires an argument");
-			actionstr = argv[i];
 		} else if (!strcmp(argv[i], "-fg")) {
 			if (++i >= argc)
 				BARF("option -fg requires an argument");
@@ -952,7 +1015,7 @@ main(int argc, char **argv)
 	wl_registry_add_listener(registry, &registry_listener, NULL);
 	wl_display_roundtrip(display);
 
-	if (!compositor || !shm || !layer_shell)
+	if (!compositor || !shm || !layer_shell || !dscm)
 		BARF("compositor does not support all needed protocols");
 
         for (int i = 0; i < nummons; i++) {
@@ -969,6 +1032,7 @@ main(int argc, char **argv)
 	        zwlr_layer_surface_v1_destroy(m->layer_surface);
 	        wl_surface_destroy(m->wl_surface);
         }
+
 	zwlr_layer_shell_v1_destroy(layer_shell);
 	fcft_destroy(font);
 	wl_shm_destroy(shm);
