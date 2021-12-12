@@ -706,10 +706,13 @@ dscm_layout(void *data, struct dscm_v1 *d, const char *name)
 }
 
 static void
-dscm_colorscheme(void *data, struct dscm_v1 *d, struct wl_array *root,
-        struct wl_array *border, struct wl_array *focus)
+dscm_colorscheme(void *data, struct dscm_v1 *d,
+        const char *root, const char *border, const char *focus)
 {
-        printf("got colorscheme\n");
+        printf("bg: %s, border: %s, focus: %s\n", root, border, focus);
+        parse_color(root, &bgcolor);
+        parse_color(border, &bordercolor);
+        drawbars();
 }
 
 static const struct dscm_v1_listener dscm_listener = {

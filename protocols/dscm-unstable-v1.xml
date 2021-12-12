@@ -78,9 +78,9 @@
                 everytime the colorscheme changes. A roundtrip after binding
                 guarantees that the client has received the colorscheme.
             </description>
-            <arg name="root" type="array" />
-            <arg name="border" type="array" />
-            <arg name="focus" type="array" />
+            <arg name="root" type="string" />
+            <arg name="border" type="string" />
+            <arg name="focus" type="string" />
         </event>
     </interface>
 
