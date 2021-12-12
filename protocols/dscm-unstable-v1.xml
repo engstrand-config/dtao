@@ -81,6 +81,7 @@
             <arg name="root" type="string" />
             <arg name="border" type="string" />
             <arg name="focus" type="string" />
+            <arg name="text" type="string" />
         </event>
     </interface>
 
