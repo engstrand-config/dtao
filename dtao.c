@@ -38,7 +38,6 @@
 #define MAX_LINE_LEN 8192
 #define MAX_CLICKABLE_AREAS 64
 #define MAX_CLICKABLE_AREA_CMD_LEN 128
-#define MAX_OUTPUT_MONITORS 8
 
 /* enums */
 enum align { ALIGN_UNSET, ALIGN_C, ALIGN_L, ALIGN_R };
@@ -54,6 +53,7 @@ typedef struct {
 } ClickableArea;
 
 typedef struct {
+        struct wl_list link;
         struct wl_output *wl_output;
         struct wl_surface *wl_surface;
         struct wl_buffer *wl_buffer;
@@ -71,15 +71,12 @@ static struct wl_seat *seat = NULL;
 static struct wl_shm *shm;
 static struct zwlr_layer_shell_v1 *layer_shell;
 static struct dscm_v1 *dscm;
-
 static struct wl_surface *activesurface;
-static Monitor monitors[MAX_OUTPUT_MONITORS];
+static struct wl_list monitors;
 
 static Monitor *selmon;
-static int nummons = 0;
 static int exclusive_zone = -1;
 static enum align titlealign, subalign;
-static bool firstsetup = true;
 static bool run_display = true;
 static bool cawaiting = false;
 static bool adjust_width = false;
@@ -119,8 +116,10 @@ static pixman_color_t
 
 /* function declarations */
 static int allocate_shm_file(size_t size);
+static void createmon(struct wl_output *output, uint32_t name);
 static void drawbar(Monitor *m);
 static void drawbars();
+static void destroymon(Monitor *m);
 static struct wl_buffer *draw_frame(char *text, Monitor *m);
 static void event_loop(void);
 static char *handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg,
@@ -226,6 +225,16 @@ allocate_shm_file(size_t size)
 }
 
 void
+createmon(struct wl_output *output, uint32_t name)
+{
+        Monitor *m;
+        m = calloc(1, sizeof(Monitor));
+        m->wl_output = output;
+        m->name = name;
+        setupmon(m);
+}
+
+void
 drawbar(Monitor *m)
 {
 	m->wl_buffer = draw_frame(lastline, m);
@@ -239,8 +248,18 @@ drawbar(Monitor *m)
 void
 drawbars()
 {
-        for (int i = 0; i < nummons; i++)
-                drawbar(&monitors[i]);
+        Monitor *m;
+        wl_list_for_each(m, &monitors, link)
+                drawbar(m);
+}
+
+void
+destroymon(Monitor *m)
+{
+        dscm_monitor_v1_destroy(m->dscm);
+        zwlr_layer_surface_v1_destroy(m->layer_surface);
+        wl_surface_destroy(m->wl_surface);
+        wl_list_remove(&m->link);
 }
 
 struct wl_buffer *
@@ -532,15 +551,7 @@ handle_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, wl_output_interface.name) == 0) {
 		struct wl_output *o = wl_registry_bind(registry, name,
 				&wl_output_interface, 1);
-                if (nummons < MAX_OUTPUT_MONITORS) {
-                        monitors[nummons] = (Monitor){
-                                .wl_output = o,
-                                .name = name
-                        };
-                        if (!firstsetup)
-                                setupmon(&monitors[nummons]);
-                        nummons++;
-                }
+                createmon(o, name);
 	} else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
 		layer_shell = wl_registry_bind(registry, name,
 				&zwlr_layer_shell_v1_interface, 1);
@@ -558,25 +569,11 @@ handle_global(void *data, struct wl_registry *registry,
 void
 handle_global_remove(void *data, struct wl_registry *registry, uint32_t name)
 {
-        bool ismonitor = false;
-        uint32_t newnummons = nummons;
-        Monitor tmpmons[MAX_OUTPUT_MONITORS];
-        Monitor *m;
-        for (int i = 0, j = 0; i < nummons; i++) {
-                m = &monitors[i];
-                if (m->name == name) {
-                        /* TODO: Destroy monitor resources */
-                        ismonitor = true;
-                        newnummons--;
-                        continue;
-                }
-                tmpmons[j] = *m;
-                j++;
-        }
 
-        if (ismonitor)
-                memcpy(&monitors, &tmpmons, sizeof(Monitor) * MAX_OUTPUT_MONITORS);
-        nummons = newnummons;
+        Monitor *m;
+        wl_list_for_each(m, &monitors, link)
+                if (m->name == name)
+                        destroymon(m);
 }
 
 void
@@ -823,15 +820,10 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
         if (!activesurface || !state)
                 return;
 
-        Monitor *m;
-        Monitor *activemon = NULL;
-
-        /* Find the currently active monitor surface */
-        for (int i = 0; i < nummons; i++) {
-                m = &monitors[i];
+        Monitor *m, *activemon = NULL;
+        wl_list_for_each(m, &monitors, link)
                 if (m->wl_surface == activesurface)
                         activemon = m;
-        }
 
         if (!activemon)
                 return;
@@ -906,6 +898,7 @@ setupmon(Monitor *m)
         if (!m->dscm)
                 BARF("could not create dscm monitor");
 
+        wl_list_insert(&monitors, &m->link);
         zwlr_layer_surface_v1_add_listener(m->layer_surface,
                         &layer_surface_listener, m);
         dscm_monitor_v1_add_listener(m->dscm, &dscm_monitor_listener, m);
@@ -1078,6 +1071,8 @@ main(int argc, char **argv)
         if (!height)
                 height = font->height + font->descent + border_width;
 
+        wl_list_init(&monitors);
+
 	/* Set up display and protocols */
 	display = wl_display_connect(NULL);
 	if (!display)
@@ -1090,20 +1085,11 @@ main(int argc, char **argv)
 	if (!compositor || !shm || !layer_shell || !dscm)
 		BARF("compositor does not support all needed protocols");
 
-        for (int i = 0; i < nummons; i++) {
-                m = &monitors[i];
-                setupmon(m);
-        }
-
-        firstsetup = false;
 	event_loop();
 
 	/* Clean everything up */
-        for (int i = 0; i < nummons; i++) {
-                m = &monitors[i];
-	        zwlr_layer_surface_v1_destroy(m->layer_surface);
-	        wl_surface_destroy(m->wl_surface);
-        }
+        wl_list_for_each(m, &monitors, link)
+                destroymon(m);
 
 	zwlr_layer_shell_v1_destroy(layer_shell);
 	fcft_destroy(font);
