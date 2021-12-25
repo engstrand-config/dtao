@@ -130,22 +130,22 @@ static void read_stdin(void);
 static void layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
         uint32_t serial, uint32_t w, uint32_t h);
 static void layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface);
-static int parse_color(const char *str, pixman_color_t *clr);
-static int parse_movement_arg(const char *str, uint32_t max);
-static int parse_movement(char *str, Monitor *m, uint32_t *xpos,
-        uint32_t *ypos, uint32_t xoffset, uint32_t yoffset);
 static int parse_clickable_area(char *str, Monitor *m, uint32_t *xpos,
         uint32_t *ypos, bool istw);
+static int parse_color(const char *str, pixman_color_t *clr);
+static int parse_movement(char *str, Monitor *m, uint32_t *xpos,
+        uint32_t *ypos, uint32_t xoffset, uint32_t yoffset);
+static int parse_movement_arg(const char *str, uint32_t max);
+static void pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
+	uint32_t time, uint32_t axis, wl_fixed_t value);
+static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
+	uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
 static void pointer_handle_enter(void *data, struct wl_pointer *pointer,
 	uint32_t serial, struct wl_surface *surface, wl_fixed_t sx, wl_fixed_t sy);
 static void pointer_handle_leave(void *data, struct wl_pointer *pointer,
 	uint32_t serial, struct wl_surface *surface);
 static void pointer_handle_motion(void *data, struct wl_pointer *pointer,
 	uint32_t time, wl_fixed_t sx, wl_fixed_t sy);
-static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
-	uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
-static void pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
-	uint32_t time, uint32_t axis, wl_fixed_t value);
 static void seat_handle_capabilities(void *data, struct wl_seat *seat,
 	enum wl_seat_capability caps);
 static void setupmon(Monitor *m);
@@ -202,17 +202,10 @@ static const struct dscm_monitor_v1_listener dscm_monitor_listener = {
 };
 
 /* function implementations */
-void
-wl_buffer_release(void *data, struct wl_buffer *wl_buffer)
-{
-	/* Sent by the compositor when it's no longer using this buffer */
-	wl_buffer_destroy(wl_buffer);
-}
-
-/* Shared memory support function adapted from [wayland-book] */
 int
 allocate_shm_file(size_t size)
 {
+        /* Shared memory support function adapted from [wayland-book] */
 	int fd = memfd_create("surface", MFD_CLOEXEC);
 	if (fd < 0)
 		return -1;
@@ -227,213 +220,22 @@ allocate_shm_file(size_t size)
 	return fd;
 }
 
-/* Color parsing logic adapted from [sway] */
-int
-parse_color(const char *str, pixman_color_t *clr)
+void
+drawbar(Monitor *m)
 {
-	if (*str == '#')
-		str++;
-	int len = strlen(str);
-
-	// Disallows "0x" prefix that strtoul would ignore
-	if ((len != 6 && len != 8) || !isxdigit(str[0]) || !isxdigit(str[1]))
-		return 1;
-
-	char *ptr;
-	uint32_t parsed = strtoul(str, &ptr, 16);
-	if (*ptr)
-		return 1;
-
-	if (len == 8) {
-		clr->alpha = (parsed & 0xff) * 0x101;
-		parsed >>= 8;
-	} else {
-		clr->alpha = 0xffff;
-	}
-	clr->red =   ((parsed >> 16) & 0xff) * 0x101;
-	clr->green = ((parsed >>  8) & 0xff) * 0x101;
-	clr->blue =  ((parsed >>  0) & 0xff) * 0x101;
-	return 0;
+	m->wl_buffer = draw_frame(lastline, m);
+	if (!m->wl_buffer)
+		return;
+	wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
+	wl_surface_damage_buffer(m->wl_surface, 0, 0, m->width, height);
+	wl_surface_commit(m->wl_surface);
 }
 
-int
-parse_movement_arg(const char *str, uint32_t max)
+void
+drawbars()
 {
-	if (!str)
-		return 0;
-
-	if (*str == '-')
-		return -(parse_movement_arg (++str, max));
-
-	if (*str == 'w')
-		return atoi(++str) * max / 100;
-
-	if (*str == 'd')
-		return atoi(++str) * font->descent / 100;
-
-	if (*str == 'a')
-		return atoi(++str) * font->ascent / 100;
-
-	return atoi(str);
-}
-
-int
-parse_movement(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, uint32_t xoffset, uint32_t yoffset)
-{
-	char *xarg = str;
-	char *yarg;
-
-	if (!*str) {
-		*ypos = (height + font->ascent - font->descent) / 2;
-	} else if (!(yarg = strchr(str, ';'))) {
-		if (*str == '_') {
-			if (!strcmp(str, "_LEFT")) {
-				*xpos = 0;
-			} else if (!strcmp(str, "_RIGHT")) {
-				*xpos = m->width;
-			} else if (!strcmp(str, "_CENTER")) {
-				*xpos = m->width / 2;
-			} else if (!strcmp(str, "_TOP")) {
-				*ypos = 0;
-			} else if (!strcmp(str, "_BOTTOM")) {
-				*ypos = height;
-			} else {
-				return 1;
-			}
-		} else {
-			*xpos = parse_movement_arg (str, m->width) + xoffset;
-		}
-	} else if (*str == ';') {
-		*ypos = parse_movement_arg (++str, height) + yoffset;
-	} else {
-		*yarg++ = '\0';
-		*ypos = parse_movement_arg (yarg, height) + yoffset;
-		*xpos = parse_movement_arg (xarg, m->width) + xoffset;
-		*--yarg = ';';
-	}
-
-	if (*xpos > m->width)
-		*xpos = m->width;
-
-	if (*ypos > height)
-		*ypos = height;
-
-	return 0;
-
-}
-
-int
-parse_clickable_area(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, bool istw)
-{
-        ClickableArea *entry = &(m->cas[m->numcas]);
-	if (cawaiting) {
-		if(*str) {
-			fprintf(stderr, "Second clickable area command must have 0 arguments\n");
-			return 1;
-		}
-
-		entry->tox = *xpos;
-		entry->toy = *ypos;
-
-		if(entry->tox < entry->fromx) {
-			uint32_t temp = entry->tox;
-			entry->tox = entry->fromx;
-			entry->fromx = temp;
-		}
-		if(entry->toy < entry->fromy) {
-			uint32_t temp = entry->toy;
-                        entry->toy = entry->fromy;
-		        entry->fromy = temp;
-		}
-
-		entry->fromy -= font->ascent;
-
-                m->numcas++;
-		cawaiting = false;
-	} else {
-		if (!*str) {
-			fprintf(stderr, "Second clickable area command must have 2 arguments (0 provided)\n");
-			return 1;
-		}
-		int button = *str - '0';
-		if(button < 0 || button > 9) {
-			fprintf(stderr, "Invalid mouse button: %d", button);
-			return 1;
-		}
-		str++;
-		if (*str != ',') {
-			fprintf(stderr, "First clickable area command must have 2 arguments (1 provided)\n");
-			return 1;
-		}
-	    	char *cmd = ++str;
-		if (strlen(cmd) > MAX_CLICKABLE_AREA_CMD_LEN) {
-			fprintf(stderr, "Clickable area command exceeds maximum length (%d)\n", MAX_CLICKABLE_AREA_CMD_LEN);
-			return 1;
-		}
-
-		entry->fromx = *xpos;
-		entry->fromy = *ypos;
-		entry->tox = 0;
-		entry->toy = 0;
-                entry->button = button;
-
-                /* Keep track of the buffer in which the clickable entry is drawn */
-                entry->istw = istw;
-
-		strcpy(entry->cmd, cmd);
-		cawaiting = true;
-	}
-
-	return 0;
-}
-
-char *
-handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
-        uint32_t *xpos, uint32_t *ypos, bool *istw)
-{
-	char *arg, *end;
-
-	if (!(arg = strchr(cmd, '(')) || !(end = strchr(arg + 1, ')')))
-		return cmd;
-
-	*arg++ = '\0';
-	*end = '\0';
-
-	if (!strcmp(cmd, "bg")) {
-		if (!*arg)
-			*bg = bgcolor;
-		else if (parse_color(arg, bg))
-			fprintf(stderr, "Bad color string \"%s\"\n", arg);
-	} else if (!strcmp(cmd, "fg")) {
-		if (!*arg)
-			*fg = fgcolor;
-		else if (parse_color(arg, fg))
-			fprintf(stderr, "Bad color string \"%s\"\n", arg);
-	} else if (!strcmp(cmd, "pa")) {
-		if (parse_movement(arg, m, xpos, ypos, 0, 0))
-			fprintf(stderr, "Invalid absolute position argument \"%s\"\n", arg);
-	} else if (!strcmp(cmd, "p")) {
-		if (parse_movement(arg, m, xpos, ypos, *xpos, *ypos))
-			fprintf(stderr, "Invalid relative position argument \"%s\"\n", arg);
-	} else if (!strcmp(cmd, "sx")) {
-		savedx = *xpos;
-	} else if (!strcmp(cmd, "rx")) {
-		*xpos = savedx;
-	} else if (!strcmp(cmd, "ca")) {
-		if (parse_clickable_area(arg, m, xpos, ypos, *istw))
-			fprintf(stderr, "Invalid clickable area command argument \"%s\"\n", arg);
-        } else if (!strcmp(cmd, "tw")) {
-                *istw = true;
-        } else if (!strcmp(cmd, "sw")) {
-                *istw = false;
-	} else {
-		fprintf(stderr, "Unrecognized command \"%s\"\n", cmd);
-	}
-
-	/* Restore string for later redraws */
-	*--arg = '(';
-	*end = ')';
-	return end;
+        for (int i = 0; i < nummons; i++)
+                drawbar(&monitors[i]);
 }
 
 struct wl_buffer *
@@ -637,200 +439,80 @@ draw_frame(char *text, Monitor *m)
 }
 
 void
-drawbar(Monitor *m)
+event_loop(void)
 {
-	m->wl_buffer = draw_frame(lastline, m);
-	if (!m->wl_buffer)
-		return;
-	wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
-	wl_surface_damage_buffer(m->wl_surface, 0, 0, m->width, height);
-	wl_surface_commit(m->wl_surface);
-}
+	int ret;
+	int wlfd = wl_display_get_fd(display);
 
-void
-drawbars()
-{
-        for (int i = 0; i < nummons; i++)
-                drawbar(&monitors[i]);
-}
+	while (run_display) {
+		fd_set rfds;
+		FD_ZERO(&rfds);
+		FD_SET(STDIN_FILENO, &rfds);
+		FD_SET(wlfd, &rfds);
 
-/* Layer-surface setup adapted from layer-shell example in [wlroots] */
-void
-layer_surface_configure(void *data,
-		struct zwlr_layer_surface_v1 *surface,
-		uint32_t serial, uint32_t w, uint32_t h)
-{
-	height = h;
-        m = data;
-	m->width = w;
-	m->stride = m->width * 4;
-	m->bufsize = m->stride * height;
+		/* Does this need to be inside the loop? */
+		wl_display_flush(display);
 
-        if (!m || !m->wl_surface || !m->layer_surface)
-                BARF("failed to configure layer surface, no monitor defined.");
+		ret = select(wlfd + 1, &rfds, NULL, NULL, NULL);
+		if (ret < 0)
+			EBARF("select");
 
-	if (exclusive_zone > 0)
-		exclusive_zone = height;
-	zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, exclusive_zone);
-	zwlr_layer_surface_v1_ack_configure(surface, serial);
-        drawbar(m);
-}
+		if (FD_ISSET(STDIN_FILENO, &rfds))
+			read_stdin();
 
-void
-layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface)
-{
-	zwlr_layer_surface_v1_destroy(surface);
-	wl_surface_destroy(((Monitor*)data)->wl_surface);
-	run_display = false;
-}
-
-void
-pointer_handle_enter(void *data, struct wl_pointer *pointer,
-		uint32_t serial, struct wl_surface *surface,
-		wl_fixed_t sx, wl_fixed_t sy)
-{
-	activesurface = surface;
-}
-
-void
-pointer_handle_leave(void *data, struct wl_pointer *pointer,
-		uint32_t serial, struct wl_surface *surface)
-{
-	activesurface = NULL;
-}
-
-void
-pointer_handle_motion(void *data, struct wl_pointer *pointer,
-		uint32_t time, wl_fixed_t sx, wl_fixed_t sy)
-{
-	mousex = (uint32_t)wl_fixed_to_int(sx);
-	mousey = (uint32_t)wl_fixed_to_int(sy);
-}
-
-void
-pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
-		uint32_t serial, uint32_t time, uint32_t button,
-		uint32_t state)
-{
-        if (!activesurface || !state)
-                return;
-
-        /* Find the currently active monitor surface */
-        Monitor *activemon = NULL;
-        for (int i = 0; i < nummons; i++) {
-                m = &monitors[i];
-                if (m->wl_surface == activesurface)
-                        activemon = m;
-        }
-
-        if (!activemon)
-                return;
-
-        for (uint32_t i = 0; i < activemon->numcas; i++) {
-                ClickableArea entry = activemon->cas[i];
-                if (entry.button == button - BTN_MOUSE &&
-                                entry.fromx <= mousex && mousex <= entry.tox &&
-                                entry.fromy <= mousey && mousey <= entry.toy) {
-                        FILE *script;
-                        script = popen(entry.cmd, "r");
-                        if (script != NULL) {
-                                while (1) {
-                                        char *line;
-                                        char buf[MAX_LINE_LEN];
-                                        line = fgets(buf, sizeof(buf), script);
-                                        if (line == NULL) break;
-                                }
-                        }
-                        pclose(script);
-                }
-        }
-}
-
-void
-pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
-		uint32_t time, uint32_t axis, wl_fixed_t value)
-{
-}
-
-void
-seat_handle_capabilities(void *data, struct wl_seat *seat,
-		enum wl_seat_capability caps)
-{
-	if (caps & WL_SEAT_CAPABILITY_POINTER) {
-		struct wl_pointer *pointer = wl_seat_get_pointer(seat);
-		wl_pointer_add_listener(pointer, &pointer_listener, NULL);
+		if (FD_ISSET(wlfd, &rfds))
+			if (wl_display_dispatch(display) == -1)
+				break;
 	}
 }
 
-void
-dscm_tag(void *data, struct dscm_v1 *d, const char *name)
+char *
+handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
+        uint32_t *xpos, uint32_t *ypos, bool *istw)
 {
-}
+	char *arg, *end;
 
-void
-dscm_layout(void *data, struct dscm_v1 *d, const char *name)
-{
-}
+	if (!(arg = strchr(cmd, '(')) || !(end = strchr(arg + 1, ')')))
+		return cmd;
 
-void
-dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
-        const char *border, const char *focus, const char *text)
-{
-        parse_color(root, &bgcolor);
-        parse_color(text, &fgcolor);
-        parse_color(border, &bordercolor);
-        drawbars();
-}
+	*arg++ = '\0';
+	*end = '\0';
 
-void
-dscm_monitor_tag(void *data, struct dscm_monitor_v1 *mon, uint32_t index,
-        enum dscm_monitor_v1_tag_state state, uint32_t numclients, uint32_t focusedclient)
-{
+	if (!strcmp(cmd, "bg")) {
+		if (!*arg)
+			*bg = bgcolor;
+		else if (parse_color(arg, bg))
+			fprintf(stderr, "Bad color string \"%s\"\n", arg);
+	} else if (!strcmp(cmd, "fg")) {
+		if (!*arg)
+			*fg = fgcolor;
+		else if (parse_color(arg, fg))
+			fprintf(stderr, "Bad color string \"%s\"\n", arg);
+	} else if (!strcmp(cmd, "pa")) {
+		if (parse_movement(arg, m, xpos, ypos, 0, 0))
+			fprintf(stderr, "Invalid absolute position argument \"%s\"\n", arg);
+	} else if (!strcmp(cmd, "p")) {
+		if (parse_movement(arg, m, xpos, ypos, *xpos, *ypos))
+			fprintf(stderr, "Invalid relative position argument \"%s\"\n", arg);
+	} else if (!strcmp(cmd, "sx")) {
+		savedx = *xpos;
+	} else if (!strcmp(cmd, "rx")) {
+		*xpos = savedx;
+	} else if (!strcmp(cmd, "ca")) {
+		if (parse_clickable_area(arg, m, xpos, ypos, *istw))
+			fprintf(stderr, "Invalid clickable area command argument \"%s\"\n", arg);
+        } else if (!strcmp(cmd, "tw")) {
+                *istw = true;
+        } else if (!strcmp(cmd, "sw")) {
+                *istw = false;
+	} else {
+		fprintf(stderr, "Unrecognized command \"%s\"\n", cmd);
+	}
 
-}
-
-void
-dscm_monitor_layout(void *data, struct dscm_monitor_v1 *mon, uint32_t index)
-{
-
-}
-
-void
-dscm_monitor_selected(void *data, struct dscm_monitor_v1 *mon, uint32_t selected)
-{
-
-}
-
-void
-dscm_monitor_title(void *data, struct dscm_monitor_v1 *mon, char *title)
-{
-
-}
-
-void
-dscm_monitor_frame(void *data, struct dscm_monitor_v1 *mon)
-{
-
-}
-
-void
-setupmon(Monitor *m)
-{
-        /* Create layer-shell surface */
-        m->wl_surface = wl_compositor_create_surface(compositor);
-        if (!m->wl_surface)
-                BARF("could not create wl_surface");
-        m->layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell,
-                        m->wl_surface, m->wl_output, layer, namespace);
-        if (!m->layer_surface)
-                BARF("could not create layer_surface");
-        zwlr_layer_surface_v1_add_listener(m->layer_surface,
-                        &layer_surface_listener, m);
-
-        zwlr_layer_surface_v1_set_size(m->layer_surface, m->width, height);
-        zwlr_layer_surface_v1_set_anchor(m->layer_surface, anchor);
-        wl_surface_commit(m->wl_surface);
-        wl_display_roundtrip(display);
+	/* Restore string for later redraws */
+	*--arg = '(';
+	*end = ')';
+	return end;
 }
 
 void
@@ -931,31 +613,350 @@ read_stdin(void)
 }
 
 void
-event_loop(void)
+layer_surface_configure(void *data,
+		struct zwlr_layer_surface_v1 *surface,
+		uint32_t serial, uint32_t w, uint32_t h)
 {
-	int ret;
-	int wlfd = wl_display_get_fd(display);
+        /* Layer-surface setup adapted from layer-shell example in [wlroots] */
+	height = h;
+        m = data;
+	m->width = w;
+	m->stride = m->width * 4;
+	m->bufsize = m->stride * height;
 
-	while (run_display) {
-		fd_set rfds;
-		FD_ZERO(&rfds);
-		FD_SET(STDIN_FILENO, &rfds);
-		FD_SET(wlfd, &rfds);
+        if (!m || !m->wl_surface || !m->layer_surface)
+                BARF("failed to configure layer surface, no monitor defined.");
 
-		/* Does this need to be inside the loop? */
-		wl_display_flush(display);
+	if (exclusive_zone > 0)
+		exclusive_zone = height;
+	zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, exclusive_zone);
+	zwlr_layer_surface_v1_ack_configure(surface, serial);
+        drawbar(m);
+}
 
-		ret = select(wlfd + 1, &rfds, NULL, NULL, NULL);
-		if (ret < 0)
-			EBARF("select");
+void
+layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface)
+{
+	zwlr_layer_surface_v1_destroy(surface);
+	wl_surface_destroy(((Monitor*)data)->wl_surface);
+	run_display = false;
+}
 
-		if (FD_ISSET(STDIN_FILENO, &rfds))
-			read_stdin();
+int
+parse_clickable_area(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, bool istw)
+{
+        ClickableArea *entry = &(m->cas[m->numcas]);
+	if (cawaiting) {
+		if(*str) {
+			fprintf(stderr, "Second clickable area command must have 0 arguments\n");
+			return 1;
+		}
 
-		if (FD_ISSET(wlfd, &rfds))
-			if (wl_display_dispatch(display) == -1)
-				break;
+		entry->tox = *xpos;
+		entry->toy = *ypos;
+
+		if(entry->tox < entry->fromx) {
+			uint32_t temp = entry->tox;
+			entry->tox = entry->fromx;
+			entry->fromx = temp;
+		}
+		if(entry->toy < entry->fromy) {
+			uint32_t temp = entry->toy;
+                        entry->toy = entry->fromy;
+		        entry->fromy = temp;
+		}
+
+		entry->fromy -= font->ascent;
+
+                m->numcas++;
+		cawaiting = false;
+	} else {
+		if (!*str) {
+			fprintf(stderr, "Second clickable area command must have 2 arguments (0 provided)\n");
+			return 1;
+		}
+		int button = *str - '0';
+		if(button < 0 || button > 9) {
+			fprintf(stderr, "Invalid mouse button: %d", button);
+			return 1;
+		}
+		str++;
+		if (*str != ',') {
+			fprintf(stderr, "First clickable area command must have 2 arguments (1 provided)\n");
+			return 1;
+		}
+	    	char *cmd = ++str;
+		if (strlen(cmd) > MAX_CLICKABLE_AREA_CMD_LEN) {
+			fprintf(stderr, "Clickable area command exceeds maximum length (%d)\n", MAX_CLICKABLE_AREA_CMD_LEN);
+			return 1;
+		}
+
+		entry->fromx = *xpos;
+		entry->fromy = *ypos;
+		entry->tox = 0;
+		entry->toy = 0;
+                entry->button = button;
+
+                /* Keep track of the buffer in which the clickable entry is drawn */
+                entry->istw = istw;
+
+		strcpy(entry->cmd, cmd);
+		cawaiting = true;
 	}
+
+	return 0;
+}
+
+int
+parse_color(const char *str, pixman_color_t *clr)
+{
+        /* Color parsing logic adapted from [sway] */
+	if (*str == '#')
+		str++;
+	int len = strlen(str);
+
+	// Disallows "0x" prefix that strtoul would ignore
+	if ((len != 6 && len != 8) || !isxdigit(str[0]) || !isxdigit(str[1]))
+		return 1;
+
+	char *ptr;
+	uint32_t parsed = strtoul(str, &ptr, 16);
+	if (*ptr)
+		return 1;
+
+	if (len == 8) {
+		clr->alpha = (parsed & 0xff) * 0x101;
+		parsed >>= 8;
+	} else {
+		clr->alpha = 0xffff;
+	}
+	clr->red =   ((parsed >> 16) & 0xff) * 0x101;
+	clr->green = ((parsed >>  8) & 0xff) * 0x101;
+	clr->blue =  ((parsed >>  0) & 0xff) * 0x101;
+	return 0;
+}
+
+int
+parse_movement(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, uint32_t xoffset, uint32_t yoffset)
+{
+	char *xarg = str;
+	char *yarg;
+
+	if (!*str) {
+		*ypos = (height + font->ascent - font->descent) / 2;
+	} else if (!(yarg = strchr(str, ';'))) {
+		if (*str == '_') {
+			if (!strcmp(str, "_LEFT")) {
+				*xpos = 0;
+			} else if (!strcmp(str, "_RIGHT")) {
+				*xpos = m->width;
+			} else if (!strcmp(str, "_CENTER")) {
+				*xpos = m->width / 2;
+			} else if (!strcmp(str, "_TOP")) {
+				*ypos = 0;
+			} else if (!strcmp(str, "_BOTTOM")) {
+				*ypos = height;
+			} else {
+				return 1;
+			}
+		} else {
+			*xpos = parse_movement_arg (str, m->width) + xoffset;
+		}
+	} else if (*str == ';') {
+		*ypos = parse_movement_arg (++str, height) + yoffset;
+	} else {
+		*yarg++ = '\0';
+		*ypos = parse_movement_arg (yarg, height) + yoffset;
+		*xpos = parse_movement_arg (xarg, m->width) + xoffset;
+		*--yarg = ';';
+	}
+
+	if (*xpos > m->width)
+		*xpos = m->width;
+
+	if (*ypos > height)
+		*ypos = height;
+
+	return 0;
+
+}
+
+int
+parse_movement_arg(const char *str, uint32_t max)
+{
+	if (!str)
+		return 0;
+
+	if (*str == '-')
+		return -(parse_movement_arg (++str, max));
+
+	if (*str == 'w')
+		return atoi(++str) * max / 100;
+
+	if (*str == 'd')
+		return atoi(++str) * font->descent / 100;
+
+	if (*str == 'a')
+		return atoi(++str) * font->ascent / 100;
+
+	return atoi(str);
+}
+
+void
+pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
+		uint32_t time, uint32_t axis, wl_fixed_t value)
+{
+}
+
+void
+pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
+		uint32_t serial, uint32_t time, uint32_t button,
+		uint32_t state)
+{
+        if (!activesurface || !state)
+                return;
+
+        /* Find the currently active monitor surface */
+        Monitor *activemon = NULL;
+        for (int i = 0; i < nummons; i++) {
+                m = &monitors[i];
+                if (m->wl_surface == activesurface)
+                        activemon = m;
+        }
+
+        if (!activemon)
+                return;
+
+        for (uint32_t i = 0; i < activemon->numcas; i++) {
+                ClickableArea entry = activemon->cas[i];
+                if (entry.button == button - BTN_MOUSE &&
+                                entry.fromx <= mousex && mousex <= entry.tox &&
+                                entry.fromy <= mousey && mousey <= entry.toy) {
+                        FILE *script;
+                        script = popen(entry.cmd, "r");
+                        if (script != NULL) {
+                                while (1) {
+                                        char *line;
+                                        char buf[MAX_LINE_LEN];
+                                        line = fgets(buf, sizeof(buf), script);
+                                        if (line == NULL) break;
+                                }
+                        }
+                        pclose(script);
+                }
+        }
+}
+
+void
+pointer_handle_enter(void *data, struct wl_pointer *pointer,
+		uint32_t serial, struct wl_surface *surface,
+		wl_fixed_t sx, wl_fixed_t sy)
+{
+	activesurface = surface;
+}
+
+void
+pointer_handle_leave(void *data, struct wl_pointer *pointer,
+		uint32_t serial, struct wl_surface *surface)
+{
+	activesurface = NULL;
+}
+
+void
+pointer_handle_motion(void *data, struct wl_pointer *pointer,
+		uint32_t time, wl_fixed_t sx, wl_fixed_t sy)
+{
+	mousex = (uint32_t)wl_fixed_to_int(sx);
+	mousey = (uint32_t)wl_fixed_to_int(sy);
+}
+
+void
+seat_handle_capabilities(void *data, struct wl_seat *seat,
+		enum wl_seat_capability caps)
+{
+	if (caps & WL_SEAT_CAPABILITY_POINTER) {
+		struct wl_pointer *pointer = wl_seat_get_pointer(seat);
+		wl_pointer_add_listener(pointer, &pointer_listener, NULL);
+	}
+}
+
+void
+setupmon(Monitor *m)
+{
+        /* Create layer-shell surface */
+        m->wl_surface = wl_compositor_create_surface(compositor);
+        if (!m->wl_surface)
+                BARF("could not create wl_surface");
+        m->layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell,
+                        m->wl_surface, m->wl_output, layer, namespace);
+        if (!m->layer_surface)
+                BARF("could not create layer_surface");
+        zwlr_layer_surface_v1_add_listener(m->layer_surface,
+                        &layer_surface_listener, m);
+
+        zwlr_layer_surface_v1_set_size(m->layer_surface, m->width, height);
+        zwlr_layer_surface_v1_set_anchor(m->layer_surface, anchor);
+        wl_surface_commit(m->wl_surface);
+        wl_display_roundtrip(display);
+}
+
+void
+wl_buffer_release(void *data, struct wl_buffer *wl_buffer)
+{
+	/* Sent by the compositor when it's no longer using this buffer */
+	wl_buffer_destroy(wl_buffer);
+}
+
+/* dscm protocol implementation */
+void
+dscm_tag(void *data, struct dscm_v1 *d, const char *name)
+{
+}
+
+void
+dscm_layout(void *data, struct dscm_v1 *d, const char *name)
+{
+}
+
+void
+dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
+        const char *border, const char *focus, const char *text)
+{
+        parse_color(root, &bgcolor);
+        parse_color(text, &fgcolor);
+        parse_color(border, &bordercolor);
+        drawbars();
+}
+
+void
+dscm_monitor_tag(void *data, struct dscm_monitor_v1 *mon, uint32_t index,
+        enum dscm_monitor_v1_tag_state state, uint32_t numclients, uint32_t focusedclient)
+{
+
+}
+
+void
+dscm_monitor_layout(void *data, struct dscm_monitor_v1 *mon, uint32_t index)
+{
+
+}
+
+void
+dscm_monitor_selected(void *data, struct dscm_monitor_v1 *mon, uint32_t selected)
+{
+
+}
+
+void
+dscm_monitor_title(void *data, struct dscm_monitor_v1 *mon, char *title)
+{
+
+}
+
+void
+dscm_monitor_frame(void *data, struct dscm_monitor_v1 *mon)
+{
+
 }
 
 int
