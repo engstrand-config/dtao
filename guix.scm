@@ -29,7 +29,7 @@
     `(("pkg-config" ,pkg-config)))
   (inputs
     `(("guile-3.0" ,guile-3.0)
-      ("wlroots-0.13.0" ,wlroots-0.13.0)
+      ("wlroots-0.14.0" ,wlroots-0.14.0)
       ("fcft" ,fcft)
       ("pixman" ,pixman)
       ("groff" ,groff)
