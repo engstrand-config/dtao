@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <getopt.h>
 #include <ctype.h>
 #include <errno.h>
 #include <fcft/fcft.h>
@@ -66,6 +67,7 @@ typedef struct {
 } Monitor;
 
 /* variables */
+static struct fcft_font *font;
 static struct wl_display *display;
 static struct wl_compositor *compositor;
 static struct wl_seat *seat = NULL;
@@ -76,44 +78,15 @@ static struct wl_surface *activesurface;
 static struct wl_list monitors;
 
 static Monitor *selmon;
-static int exclusive_zone = -1;
-static enum align titlealign, subalign;
-static bool run_display = true;
-static bool cawaiting = false;
-static bool adjust_width = false;
-static bool is_bottom = false;
-static uint32_t border_width = 0;
-static uint32_t TAGMASK = 0;
-
-static int32_t output = -1;
-static uint32_t height, layer, anchor;
-static uint32_t savedx = 0, mousex = 0, mousey = 0;
-
 static char *namespace = "dtao";
-static struct fcft_font *font;
 static char line[MAX_LINE_LEN];
 static char lastline[MAX_LINE_LEN];
-static int linerem;
+static bool run_display = true;
+static bool cawaiting = false;
 static bool eat_line = false;
-static pixman_color_t
-	bordercolor = {
-		.red = 0xffff,
-		.green = 0x0000,
-		.blue = 0x0000,
-		.alpha = 0xffff,
-	},
-	bgcolor = {
-		.red = 0x1111,
-		.green = 0x1111,
-		.blue = 0x1111,
-		.alpha = 0x0000,
-	},
-	fgcolor = {
-		.red = 0xb3b3,
-		.green = 0xb3b3,
-		.blue = 0xb3b3,
-		.alpha = 0xffff,
-	};
+static int linerem;
+static uint32_t TAGMASK = 0;
+static uint32_t savedx = 0, mousex = 0, mousey = 0;
 
 /* function declarations */
 static int allocate_shm_file(size_t size);
@@ -206,6 +179,10 @@ static const struct dscm_monitor_v1_listener dscm_monitor_listener = {
         .frame = dscm_monitor_frame,
 };
 
+/* include guile config parameters */
+#include "dscm-utils.h"
+#include "dscm-config.h"
+
 /* function implementations */
 int
 allocate_shm_file(size_t size)
@@ -294,7 +271,7 @@ draw_frame(char *text, Monitor *m)
 	pixman_image_t *bar = pixman_image_create_bits(PIXMAN_a8r8g8b8,
 			m->width, height, data, m->width * 4);
 
-        if (!adjust_width)
+        if (!adjustwidth)
                 pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
                                 &(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
 
@@ -312,8 +289,8 @@ draw_frame(char *text, Monitor *m)
 
 	pixman_image_t *fgfill = pixman_image_create_solid_fill(&textfgcolor);
 
-        uint32_t yoffset = is_bottom ? border_width : 0;
-        uint32_t heightoffset = is_bottom ? 0 : border_width;
+        uint32_t yoffset = isbottom ? borderpx : 0;
+        uint32_t heightoffset = isbottom ? 0 : borderpx;
         uint32_t twxpos = 0, swxpos = 0, twypos, swypos;
 	/* start drawing at center-left (ypos sets the text baseline) */
         twypos = swypos = (height + heightoffset + font->ascent - font->descent) / 2;
@@ -632,9 +609,9 @@ layer_surface_configure(void *data,
         if (!m || !m->wl_surface || !m->layer_surface)
                 BARF("failed to configure layer surface, no monitor defined.");
 
-	if (exclusive_zone > 0)
-		exclusive_zone = height;
-	zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, exclusive_zone);
+	if (exclusive > 0)
+		exclusive = height;
+	zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, exclusive);
 	zwlr_layer_surface_v1_ack_configure(surface, serial);
         drawbar(m);
 }
@@ -975,92 +952,27 @@ dscm_monitor_frame(void *data, struct dscm_monitor_v1 *mon)
 int
 main(int argc, char **argv)
 {
+	int c;
         Monitor *m;
-	char *fontstr = "";
+        char *configfile = NULL;
 
-	layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
-	anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-			ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
-			ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
-
-	/* Parse options */
-	for (int i = 1; i < argc; i++) {
-		if (!strcmp(argv[i], "-b")) {
-                        is_bottom = true;
-			anchor ^= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-				ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
-		} else if (!strcmp(argv[i], "-bg")) {
-			if (++i >= argc)
-				BARF("option -bg requires an argument");
-			if (parse_color(argv[i], &bgcolor))
-				BARF("malformed color string for -bg");
-		} else if (!strcmp(argv[i], "-fg")) {
-			if (++i >= argc)
-				BARF("option -fg requires an argument");
-			if (parse_color(argv[i], &fgcolor))
-				BARF("malformed color string for -fg");
-		} else if (!strcmp(argv[i], "-fn")) {
-			if (++i >= argc)
-				BARF("option -fn requires an argument");
-			fontstr = argv[i];
-		} else if (!strcmp(argv[i], "-h")) {
-			if (++i >= argc)
-				BARF("option -h requires an argument");
-			height = atoi(argv[i]);
-		} else if (!strcmp(argv[i], "-L")) {
-			if (++i >= argc)
-				BARF("option -L requires an argument");
-			if (argv[i][0] == 'o')
-				layer = ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY;
-			else if (argv[i][0] == 'b')
-				layer = ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM;
-			else if (argv[i][0] == 'u')
-				layer = ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND;
-			else
-				layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
-		} else if (!strcmp(argv[i], "-sa")) {
-			if (++i >= argc)
-				BARF("option -sa requires an argument");
-			if (argv[i][0] == 'l')
-				subalign = ALIGN_L;
-			else if (argv[i][0] == 'c')
-				subalign = ALIGN_C;
-			else
-				subalign = ALIGN_R;
-		} else if (!strcmp(argv[i], "-ta")) {
-			if (++i >= argc)
-				BARF("option -ta requires an argument");
-                        if (argv[i][0] == 'l')
-                                titlealign = ALIGN_L;
-                        else if (argv[i][0] == 'c')
-                                titlealign = ALIGN_C;
-                        else
-                                titlealign = ALIGN_R;
-		} else if (!strcmp(argv[i], "-v")) {
+	while ((c = getopt(argc, argv, "c:hv")) != -1) {
+                if (c == 'c')
+                        configfile = optarg;
+                else if (c == 'v') {
 			fprintf(stderr, PROGRAM " " VERSION ", " COPYRIGHT "\n");
 			return 0;
-		} else if (!strcmp(argv[i], "-xs")) {
-			if (++i >= argc)
-				BARF("option -xs requires an argument");
-			/* One-based to match dzen2 */
-			output = atoi(argv[i]) - 1;
-		} else if (!strcmp(argv[i], "-z")) {
-			exclusive_zone++;
-                } else if (!strcmp(argv[i], "-a")) {
-                        adjust_width = true;
-                } else if (!strcmp(argv[i], "-bw")) {
-                        if (++i >= argc)
-                                BARF("option -bw requires an argument");
-                        border_width = atoi(argv[i]);
-                } else if (!strcmp(argv[i], "-bc")) {
-			if (++i >= argc)
-				BARF("option -bc requires an argument");
-			if (parse_color(argv[i], &bordercolor))
-				BARF("malformed color string for -bc");
-		} else {
-			BARF("option '%s' not recognized\n%s", argv[i], USAGE);
-		}
+                } else
+			goto usage;
 	}
+	if (optind < argc)
+		goto usage;
+        if (!configfile)
+                BARF("error: config path must be set using '-c'");
+
+        /* Load guile config */
+        scm_init_guile();
+        dscm_config_parse(configfile);
 
 	/* Load selected font */
 	fcft_set_scaling_filter(FCFT_SCALING_FILTER_LANCZOS3);
@@ -1070,7 +982,7 @@ main(int argc, char **argv)
 
         /* Set layer size and positioning */
         if (!height)
-                height = font->height + font->descent + border_width;
+                height = font->height + font->descent + borderpx;
 
         wl_list_init(&monitors);
 
@@ -1100,4 +1012,6 @@ main(int argc, char **argv)
 	wl_display_disconnect(display);
 
 	return 0;
+usage:
+	BARF("Usage: %s [-c path to config.scm]", argv[0]);
 }
