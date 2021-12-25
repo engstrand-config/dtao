@@ -30,7 +30,8 @@
 
 (define %user-blocks
   (list
-    %block-time))
+    %block-time
+    %block-battery))
 
 (define write-port (open-output-pipe "dtao -a -ta l -sa c -fg FFFFFF -fn \"JetBrains Mono:style=bold:size=13\""))
 

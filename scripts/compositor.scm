@@ -53,28 +53,33 @@
 
 (define (update-compositor-blocks blocks status-info)
   (let loop ((line (read-line)))
-    (if (char-ready? read-port)
-        (loop (read-line)
-              (let* ((line-data (string-split line #\space))
-                     (dpy (car line-data))
-                     (saved-info (or (assoc-ref status-info dpy) '())))
-                (assoc-set!
-                  status-info
-                  dpy
-                  (let ((type (cadr line-data)))
-                    (if (eq? type "tags")
-                        (append `(("active-tags" . ,(caddr line-data))
-                                  ("selected-tag" . ,(cadddr line-data)))
-                                saved-info)
-                        (cons `(,type . ,(caddr line-data))
-                              saved-info))))))
-        (update-blocks status-info blocks))))
+    (if (eof-object? line)
+        "hello world"
+        (begin
+          ;; Update state
+          (let* ((line-data (string-split line #\space))
+                 (dpy (car line-data))
+                 (saved-info (or (assoc-ref status-info dpy) '())))
+            (assoc-set!
+              status-info
+              dpy
+              (let ((type (cadr line-data)))
+                (if (eq? type "tags")
+                    (append `(("active-tags" . ,(caddr line-data))
+                              ("selected-tag" . ,(cadddr line-data)))
+                            saved-info)
+                    (cons `(,type . ,(caddr line-data))
+                          saved-info)))))
+          ;; Check if there is more data to be read
+          (if (char-ready? read-port)
+              (loop (read-line))
+              (update-blocks status-info blocks))))))
 
-(define (statusbar initial-state)
-  (let loop ((previous-base-output (%block-tags '()) current-state))
+(define (statusbar)
+  (let loop ((previous-base-output (%block-tags '())) (current-state '()) (iteration 0))
     (begin
-      (display (string-append "^tw()" previous-base-output "\n") write-port)
-      (loop (update-compositor-blocks %compositor-blocks current-state) current-state))))
+      (display (string-append "^tw()" previous-base-output (number->string iteration) "\n") write-port)
+      (loop (update-compositor-blocks %compositor-blocks current-state) current-state (+ iteration 1)))))
 
-(statusbar '())
+(statusbar)
 (close-pipe write-port)
