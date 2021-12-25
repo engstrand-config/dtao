@@ -58,8 +58,10 @@ typedef struct {
         struct wl_surface *wl_surface;
         struct wl_buffer *wl_buffer;
         struct zwlr_layer_surface_v1 *layer_surface;
+        struct dscm_monitor_v1 *dscm;
         ClickableArea cas[MAX_CLICKABLE_AREAS];
-        uint32_t name, width, stride, bufsize, numcas;
+        uint32_t name, width, stride, bufsize, numcas, layout, activetags;
+        char *title;
 } Monitor;
 
 /* variables */
@@ -73,7 +75,7 @@ static struct dscm_v1 *dscm;
 static struct wl_surface *activesurface;
 static Monitor monitors[MAX_OUTPUT_MONITORS];
 
-static Monitor *m;
+static Monitor *selmon;
 static int nummons = 0;
 static int exclusive_zone = -1;
 static enum align titlealign, subalign;
@@ -83,6 +85,7 @@ static bool cawaiting = false;
 static bool adjust_width = false;
 static bool is_bottom = false;
 static uint32_t border_width = 0;
+static uint32_t TAGMASK = 0;
 
 static int32_t output = -1;
 static uint32_t height, layer, anchor;
@@ -188,6 +191,8 @@ static const struct wl_pointer_listener pointer_listener = {
 	pointer_handle_button,
 	pointer_handle_axis,
 };
+
+/* dscm protocol */
 static const struct dscm_v1_listener dscm_listener = {
 	.tag = dscm_tag,
 	.layout = dscm_layout,
@@ -556,9 +561,11 @@ handle_global_remove(void *data, struct wl_registry *registry, uint32_t name)
         bool ismonitor = false;
         uint32_t newnummons = nummons;
         Monitor tmpmons[MAX_OUTPUT_MONITORS];
+        Monitor *m;
         for (int i = 0, j = 0; i < nummons; i++) {
                 m = &monitors[i];
                 if (m->name == name) {
+                        /* TODO: Destroy monitor resources */
                         ismonitor = true;
                         newnummons--;
                         continue;
@@ -618,8 +625,8 @@ layer_surface_configure(void *data,
 		uint32_t serial, uint32_t w, uint32_t h)
 {
         /* Layer-surface setup adapted from layer-shell example in [wlroots] */
+        Monitor *m = data;
 	height = h;
-        m = data;
 	m->width = w;
 	m->stride = m->width * 4;
 	m->bufsize = m->stride * height;
@@ -816,8 +823,10 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
         if (!activesurface || !state)
                 return;
 
-        /* Find the currently active monitor surface */
+        Monitor *m;
         Monitor *activemon = NULL;
+
+        /* Find the currently active monitor surface */
         for (int i = 0; i < nummons; i++) {
                 m = &monitors[i];
                 if (m->wl_surface == activesurface)
@@ -887,12 +896,19 @@ setupmon(Monitor *m)
         m->wl_surface = wl_compositor_create_surface(compositor);
         if (!m->wl_surface)
                 BARF("could not create wl_surface");
+
         m->layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell,
                         m->wl_surface, m->wl_output, layer, namespace);
+        m->dscm = dscm_v1_get_monitor(dscm, m->wl_output);
+
         if (!m->layer_surface)
                 BARF("could not create layer_surface");
+        if (!m->dscm)
+                BARF("could not create dscm monitor");
+
         zwlr_layer_surface_v1_add_listener(m->layer_surface,
                         &layer_surface_listener, m);
+        dscm_monitor_v1_add_listener(m->dscm, &dscm_monitor_listener, m);
 
         zwlr_layer_surface_v1_set_size(m->layer_surface, m->width, height);
         zwlr_layer_surface_v1_set_anchor(m->layer_surface, anchor);
@@ -932,36 +948,40 @@ void
 dscm_monitor_tag(void *data, struct dscm_monitor_v1 *mon, uint32_t index,
         enum dscm_monitor_v1_tag_state state, uint32_t numclients, uint32_t focusedclient)
 {
-
+        Monitor *m = data;
+        if (numclients > 0)
+                m->activetags |= ((1 << index) | TAGMASK);
+        else
+                m->activetags &= ~((1 << index) | TAGMASK);
 }
 
 void
 dscm_monitor_layout(void *data, struct dscm_monitor_v1 *mon, uint32_t index)
 {
-
+        ((Monitor*)data)->layout = index;
 }
 
 void
 dscm_monitor_selected(void *data, struct dscm_monitor_v1 *mon, uint32_t selected)
 {
-
+        selmon = (Monitor*)data;
 }
 
 void
 dscm_monitor_title(void *data, struct dscm_monitor_v1 *mon, char *title)
 {
-
+        ((Monitor*)data)->title = title;
 }
 
 void
 dscm_monitor_frame(void *data, struct dscm_monitor_v1 *mon)
 {
-
 }
 
 int
 main(int argc, char **argv)
 {
+        Monitor *m;
 	char *fontstr = "";
 
 	layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
