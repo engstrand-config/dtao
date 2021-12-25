@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <wayland-client.h>
 #include <linux/input.h>
+#include <libguile.h>
 #include "utf8.h"
 #include "wlr-layer-shell-unstable-v1-protocol.h"
 #include "dscm-unstable-v1-protocol.h"
