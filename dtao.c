@@ -20,6 +20,7 @@
 #include "dscm-unstable-v1-protocol.h"
 #include "xdg-shell-protocol.h"
 
+/* macros */
 #define BARF(fmt, ...)		do { fprintf(stderr, fmt "\n", ##__VA_ARGS__); exit(EXIT_FAILURE); } while (0)
 #define EBARF(fmt, ...)		BARF(fmt ": %s", ##__VA_ARGS__, strerror(errno))
 #define MIN(a, b)               ((a) < (b) ? (a) : (b))
@@ -39,6 +40,7 @@
 #define MAX_CLICKABLE_AREA_CMD_LEN 128
 #define MAX_OUTPUT_MONITORS 8
 
+/* enums */
 enum align { ALIGN_UNSET, ALIGN_C, ALIGN_L, ALIGN_R };
 
 typedef struct {
@@ -60,13 +62,13 @@ typedef struct {
         uint32_t name, width, stride, bufsize, numcas;
 } Monitor;
 
+/* variables */
 static struct wl_display *display;
 static struct wl_compositor *compositor;
+static struct wl_seat *seat = NULL;
 static struct wl_shm *shm;
 static struct zwlr_layer_shell_v1 *layer_shell;
 static struct dscm_v1 *dscm;
-
-struct wl_seat *seat = NULL;
 
 static struct wl_surface *activesurface;
 static Monitor monitors[MAX_OUTPUT_MONITORS];
@@ -112,19 +114,103 @@ static pixman_color_t
 		.alpha = 0xffff,
 	};
 
-static void
+/* function declarations */
+static int allocate_shm_file(size_t size);
+static void drawbar(Monitor *m);
+static void drawbars();
+static struct wl_buffer *draw_frame(char *text, Monitor *m);
+static void event_loop(void);
+static char *handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg,
+        pixman_color_t *fg, uint32_t *xpos, uint32_t *ypos, bool *istw);
+static void handle_global(void *data, struct wl_registry *registry,
+        uint32_t name, const char *interface, uint32_t version);
+static void handle_global_remove(void *data, struct wl_registry *registry,
+        uint32_t name);
+static void read_stdin(void);
+static void layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
+        uint32_t serial, uint32_t w, uint32_t h);
+static void layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface);
+static int parse_color(const char *str, pixman_color_t *clr);
+static int parse_movement_arg(const char *str, uint32_t max);
+static int parse_movement(char *str, Monitor *m, uint32_t *xpos,
+        uint32_t *ypos, uint32_t xoffset, uint32_t yoffset);
+static int parse_clickable_area(char *str, Monitor *m, uint32_t *xpos,
+        uint32_t *ypos, bool istw);
+static void pointer_handle_enter(void *data, struct wl_pointer *pointer,
+	uint32_t serial, struct wl_surface *surface, wl_fixed_t sx, wl_fixed_t sy);
+static void pointer_handle_leave(void *data, struct wl_pointer *pointer,
+	uint32_t serial, struct wl_surface *surface);
+static void pointer_handle_motion(void *data, struct wl_pointer *pointer,
+	uint32_t time, wl_fixed_t sx, wl_fixed_t sy);
+static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
+	uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
+static void pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
+	uint32_t time, uint32_t axis, wl_fixed_t value);
+static void seat_handle_capabilities(void *data, struct wl_seat *seat,
+	enum wl_seat_capability caps);
+static void setupmon(Monitor *m);
+static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
+
+/* dscm protocol */
+static void dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
+        const char *border, const char *focus, const char *text);
+static void dscm_layout(void *data, struct dscm_v1 *d, const char *name);
+static void dscm_tag(void *data, struct dscm_v1 *d, const char *name);
+static void dscm_monitor_frame(void *data, struct dscm_monitor_v1 *mon);
+static void dscm_monitor_layout(void *data, struct dscm_monitor_v1 *mon,
+        uint32_t index);
+static void dscm_monitor_tag(void *data, struct dscm_monitor_v1 *mon,
+        uint32_t index, enum dscm_monitor_v1_tag_state state,
+        uint32_t numclients, uint32_t focusedclient);
+static void dscm_monitor_title(void *data, struct dscm_monitor_v1 *mon, char *title);
+static void dscm_monitor_selected(void *data, struct dscm_monitor_v1 *mon,
+        uint32_t selected);
+
+/* global listeners */
+static const struct wl_registry_listener registry_listener = {
+        .global = handle_global,
+        .global_remove = handle_global_remove,
+};
+static const struct wl_buffer_listener wl_buffer_listener = {
+	.release = wl_buffer_release,
+};
+static struct zwlr_layer_surface_v1_listener layer_surface_listener = {
+	.configure = layer_surface_configure,
+	.closed = layer_surface_closed,
+};
+static const struct wl_seat_listener seat_listener = {
+	seat_handle_capabilities,
+};
+static const struct wl_pointer_listener pointer_listener = {
+	pointer_handle_enter,
+	pointer_handle_leave,
+	pointer_handle_motion,
+	pointer_handle_button,
+	pointer_handle_axis,
+};
+static const struct dscm_v1_listener dscm_listener = {
+	.tag = dscm_tag,
+	.layout = dscm_layout,
+	.colorscheme = dscm_colorscheme,
+};
+static const struct dscm_monitor_v1_listener dscm_monitor_listener = {
+        .tag = dscm_monitor_tag,
+        .layout = dscm_monitor_layout,
+        .selected = dscm_monitor_selected,
+        .title = dscm_monitor_title,
+        .frame = dscm_monitor_frame,
+};
+
+/* function implementations */
+void
 wl_buffer_release(void *data, struct wl_buffer *wl_buffer)
 {
 	/* Sent by the compositor when it's no longer using this buffer */
 	wl_buffer_destroy(wl_buffer);
 }
 
-static const struct wl_buffer_listener wl_buffer_listener = {
-	.release = wl_buffer_release,
-};
-
 /* Shared memory support function adapted from [wayland-book] */
-static int
+int
 allocate_shm_file(size_t size)
 {
 	int fd = memfd_create("surface", MFD_CLOEXEC);
@@ -142,7 +228,7 @@ allocate_shm_file(size_t size)
 }
 
 /* Color parsing logic adapted from [sway] */
-static int
+int
 parse_color(const char *str, pixman_color_t *clr)
 {
 	if (*str == '#')
@@ -170,7 +256,7 @@ parse_color(const char *str, pixman_color_t *clr)
 	return 0;
 }
 
-static int
+int
 parse_movement_arg(const char *str, uint32_t max)
 {
 	if (!str)
@@ -191,7 +277,7 @@ parse_movement_arg(const char *str, uint32_t max)
 	return atoi(str);
 }
 
-static int
+int
 parse_movement(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, uint32_t xoffset, uint32_t yoffset)
 {
 	char *xarg = str;
@@ -236,7 +322,7 @@ parse_movement(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, uint32_t x
 
 }
 
-static int
+int
 parse_clickable_area(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, bool istw)
 {
         ClickableArea *entry = &(m->cas[m->numcas]);
@@ -301,7 +387,7 @@ parse_clickable_area(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, bool
 	return 0;
 }
 
-static char *
+char *
 handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
         uint32_t *xpos, uint32_t *ypos, bool *istw)
 {
@@ -350,12 +436,12 @@ handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
 	return end;
 }
 
-static struct wl_buffer *
+struct wl_buffer *
 draw_frame(char *text, Monitor *m)
 {
 	/* Allocate buffer to be attached to the surface */
 	int fd = allocate_shm_file(m->bufsize);
-	if (fd == -1)
+	if (fd == -1 || !m || m->bufsize == 0)
 		return NULL;
 
 	uint32_t *data = mmap(NULL, m->bufsize,
@@ -550,7 +636,7 @@ draw_frame(char *text, Monitor *m)
 	return buffer;
 }
 
-static void
+void
 drawbar(Monitor *m)
 {
 	m->wl_buffer = draw_frame(lastline, m);
@@ -561,7 +647,7 @@ drawbar(Monitor *m)
 	wl_surface_commit(m->wl_surface);
 }
 
-static void
+void
 drawbars()
 {
         for (int i = 0; i < nummons; i++)
@@ -569,7 +655,7 @@ drawbars()
 }
 
 /* Layer-surface setup adapted from layer-shell example in [wlroots] */
-static void
+void
 layer_surface_configure(void *data,
 		struct zwlr_layer_surface_v1 *surface,
 		uint32_t serial, uint32_t w, uint32_t h)
@@ -590,7 +676,7 @@ layer_surface_configure(void *data,
         drawbar(m);
 }
 
-static void
+void
 layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface)
 {
 	zwlr_layer_surface_v1_destroy(surface);
@@ -598,12 +684,7 @@ layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface)
 	run_display = false;
 }
 
-static struct zwlr_layer_surface_v1_listener layer_surface_listener = {
-	.configure = layer_surface_configure,
-	.closed = layer_surface_closed,
-};
-
-static void
+void
 pointer_handle_enter(void *data, struct wl_pointer *pointer,
 		uint32_t serial, struct wl_surface *surface,
 		wl_fixed_t sx, wl_fixed_t sy)
@@ -611,14 +692,14 @@ pointer_handle_enter(void *data, struct wl_pointer *pointer,
 	activesurface = surface;
 }
 
-static void
+void
 pointer_handle_leave(void *data, struct wl_pointer *pointer,
 		uint32_t serial, struct wl_surface *surface)
 {
 	activesurface = NULL;
 }
 
-static void
+void
 pointer_handle_motion(void *data, struct wl_pointer *pointer,
 		uint32_t time, wl_fixed_t sx, wl_fixed_t sy)
 {
@@ -626,7 +707,7 @@ pointer_handle_motion(void *data, struct wl_pointer *pointer,
 	mousey = (uint32_t)wl_fixed_to_int(sy);
 }
 
-static void
+void
 pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 		uint32_t serial, uint32_t time, uint32_t button,
 		uint32_t state)
@@ -665,21 +746,13 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
         }
 }
 
-static void
+void
 pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
 		uint32_t time, uint32_t axis, wl_fixed_t value)
 {
 }
 
-static const struct wl_pointer_listener pointer_listener = {
-	pointer_handle_enter,
-	pointer_handle_leave,
-	pointer_handle_motion,
-	pointer_handle_button,
-	pointer_handle_axis,
-};
-
-static void
+void
 seat_handle_capabilities(void *data, struct wl_seat *seat,
 		enum wl_seat_capability caps)
 {
@@ -689,23 +762,17 @@ seat_handle_capabilities(void *data, struct wl_seat *seat,
 	}
 }
 
-static const struct wl_seat_listener seat_listener = {
-	seat_handle_capabilities,
-};
-
-static void
+void
 dscm_tag(void *data, struct dscm_v1 *d, const char *name)
 {
-        printf("got tag\n");
 }
 
-static void
+void
 dscm_layout(void *data, struct dscm_v1 *d, const char *name)
 {
-        printf("got layout\n");
 }
 
-static void
+void
 dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
         const char *border, const char *focus, const char *text)
 {
@@ -715,52 +782,38 @@ dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
         drawbars();
 }
 
-static const struct dscm_v1_listener dscm_listener = {
-	.tag = dscm_tag,
-	.layout = dscm_layout,
-	.colorscheme = dscm_colorscheme,
-};
+void
+dscm_monitor_tag(void *data, struct dscm_monitor_v1 *mon, uint32_t index,
+        enum dscm_monitor_v1_tag_state state, uint32_t numclients, uint32_t focusedclient)
+{
 
-/* static void */
-/* dscm_monitor_tag(void *data, struct dscm_monitor_v1 *mon, uint32_t index, */
-/*         enum dscm_monitor_v1_tag_state state, uint32_t numclients, uint32_t focusedclient) */
-/* { */
+}
 
-/* } */
+void
+dscm_monitor_layout(void *data, struct dscm_monitor_v1 *mon, uint32_t index)
+{
 
-/* static void */
-/* dscm_monitor_layout(void *data, struct dscm_monitor_v1 *mon, uint32_t index) */
-/* { */
+}
 
-/* } */
+void
+dscm_monitor_selected(void *data, struct dscm_monitor_v1 *mon, uint32_t selected)
+{
 
-/* static void */
-/* dscm_monitor_selected(void *data, struct dscm_monitor_v1 *mon, uint32_t selected) */
-/* { */
+}
 
-/* } */
+void
+dscm_monitor_title(void *data, struct dscm_monitor_v1 *mon, char *title)
+{
 
-/* static void */
-/* dscm_monitor_title(void *data, struct dscm_monitor_v1 *mon, char *title) */
-/* { */
+}
 
-/* } */
+void
+dscm_monitor_frame(void *data, struct dscm_monitor_v1 *mon)
+{
 
-/* static void */
-/* dscm_monitor_frame(void *data, struct dscm_monitor_v1 *mon) */
-/* { */
+}
 
-/* } */
-
-/* static const struct dscm_monitor_v1_listener dscm_monitor_listener = { */
-/*     .tag = dscm_monitor_tag, */
-/*     .layout = dscm_monitor_layout, */
-/*     .selected = dscm_monitor_selected, */
-/*     .title = dscm_monitor_title, */
-/*     .frame = dscm_monitor_frame, */
-/* }; */
-
-static void
+void
 setupmon(Monitor *m)
 {
         /* Create layer-shell surface */
@@ -780,7 +833,7 @@ setupmon(Monitor *m)
         wl_display_roundtrip(display);
 }
 
-static void
+void
 handle_global(void *data, struct wl_registry *registry,
 		uint32_t name, const char *interface, uint32_t version)
 {
@@ -815,7 +868,7 @@ handle_global(void *data, struct wl_registry *registry,
 	}
 }
 
-static void
+void
 handle_global_remove(void *data, struct wl_registry *registry, uint32_t name)
 {
         bool ismonitor = false;
@@ -837,12 +890,7 @@ handle_global_remove(void *data, struct wl_registry *registry, uint32_t name)
         nummons = newnummons;
 }
 
-static const struct wl_registry_listener registry_listener = {
-    .global = handle_global,
-    .global_remove = handle_global_remove,
-};
-
-static void
+void
 read_stdin(void)
 {
 	/* Read as much data as we can into line buffer */
@@ -882,7 +930,7 @@ read_stdin(void)
         drawbars();
 }
 
-static void
+void
 event_loop(void)
 {
 	int ret;
