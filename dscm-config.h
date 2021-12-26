@@ -8,6 +8,7 @@ static uint32_t height;
 static int exclusive            = -1;
 static int adjustwidth          = 0;
 static int isbottom             = 0;
+static int usewmcolorscheme     = 0;
 static int borderpx             = 0;
 static char *fontstr            = "";
 
@@ -55,14 +56,16 @@ dscm_config_parse(char *configfile)
         exclusive = dscm_alist_get_int(config, "exclusive");
         isbottom = dscm_alist_get_int(config, "bottom");
         adjustwidth = dscm_alist_get_int(config, "adjust-width");
-        layerstr = dscm_alist_get_string(config, "layer");
-        parse_color(dscm_alist_get_string(config, "background-color"), &bgcolor);
-        parse_color(dscm_alist_get_string(config, "border-color"), &bordercolor);
-        parse_color(dscm_alist_get_string(config, "foreground-color"), &fgcolor);
+        usewmcolorscheme = dscm_alist_get_int(config, "use-dwl-guile-colorscheme");
 
         if (isbottom)
                 anchor ^= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
                           ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM;
+        if (!usewmcolorscheme) {
+                parse_color(dscm_alist_get_string(config, "background-color"), &bgcolor);
+                parse_color(dscm_alist_get_string(config, "border-color"), &bordercolor);
+                parse_color(dscm_alist_get_string(config, "foreground-color"), &fgcolor);
+        }
 
         barlayer = dscm_alist_get(config, "layer");
         eval = scm_primitive_eval(barlayer);

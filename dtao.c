@@ -910,6 +910,8 @@ void
 dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
         const char *border, const char *focus, const char *text)
 {
+        if (!usewmcolorscheme)
+                return;
         parse_color(root, &bgcolor);
         parse_color(text, &fgcolor);
         parse_color(border, &bordercolor);
