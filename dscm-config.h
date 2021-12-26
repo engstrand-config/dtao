@@ -12,7 +12,7 @@ static int borderpx             = 0;
 static char *fontstr            = "";
 
 /* positioning */
-static enum align titlealign, subalign;
+static enum align titlealign = ALIGN_L, subalign = ALIGN_R;
 static int layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;;
 static int anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
                     ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
@@ -42,9 +42,10 @@ static pixman_color_t
 static inline void
 dscm_config_parse(char *configfile)
 {
+        SCM eval, barlayer, twalign, swalign;
+
         scm_c_primitive_load(configfile);
         config = dscm_get_variable("config");
-
         if (scm_is_null(config))
                 BARF("invalid config");
 
@@ -54,25 +55,24 @@ dscm_config_parse(char *configfile)
         exclusive = dscm_alist_get_int(config, "exclusive");
         isbottom = dscm_alist_get_int(config, "bottom");
         adjustwidth = dscm_alist_get_int(config, "adjust-width");
+        layerstr = dscm_alist_get_string(config, "layer");
         parse_color(dscm_alist_get_string(config, "background-color"), &bgcolor);
         parse_color(dscm_alist_get_string(config, "border-color"), &bordercolor);
         parse_color(dscm_alist_get_string(config, "foreground-color"), &fgcolor);
 
+        if (isbottom)
+                anchor ^= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
+                          ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM;
 
+        barlayer = dscm_alist_get(config, "layer");
+        eval = scm_primitive_eval(barlayer);
+        layer = scm_to_int(eval);
 
-        /* if (argv[i][0] == 'o') */
-        /*         layer = ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY; */
-        /* else if (argv[i][0] == 'b') */
-        /*         layer = ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM; */
-        /* else if (argv[i][0] == 'u') */
-        /*         layer = ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND; */
-        /* else */
-        /*         layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP; */
+        twalign = dscm_alist_get(config, "title-align");
+        eval = scm_primitive_eval(twalign);
+        titlealign = (enum align)scm_to_int(eval);
 
-        /* if (argv[i][0] == 'l') */
-        /*         subalign = ALIGN_L; */
-        /* else if (argv[i][0] == 'c') */
-        /*         subalign = ALIGN_C; */
-        /* else */
-        /*         subalign = ALIGN_R; */
+        swalign = dscm_alist_get(config, "sub-align");
+        eval = scm_primitive_eval(swalign);
+        subalign = (enum align)scm_to_int(eval);
 }

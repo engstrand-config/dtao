@@ -181,6 +181,7 @@ static const struct dscm_monitor_v1_listener dscm_monitor_listener = {
 
 /* include guile config parameters */
 #include "dscm-utils.h"
+#include "dscm-bindings.h"
 #include "dscm-config.h"
 
 /* function implementations */
@@ -972,6 +973,7 @@ main(int argc, char **argv)
 
         /* Load guile config */
         scm_init_guile();
+        dscm_register();
         dscm_config_parse(configfile);
 
 	/* Load selected font */

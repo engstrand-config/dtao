@@ -33,7 +33,7 @@
     %block-time
     %block-battery))
 
-(define write-port (open-output-pipe "dtao -a -ta l -sa c -fg FFFFFF -fn \"JetBrains Mono:style=bold:size=13\""))
+(define write-port (open-output-pipe "dtao -c ~/dtao.scm"))
 
 (define (update-user-blocks blocks iteration)
   (update-blocks '() blocks))
