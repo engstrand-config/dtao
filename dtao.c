@@ -66,6 +66,13 @@ typedef struct {
         char *title;
 } Monitor;
 
+typedef struct {
+        scm_t_bits *render;
+        scm_t_bits *click;
+        char *prevtext, *curtext;
+        uint32_t signal, interval;
+} Block;
+
 /* variables */
 static struct fcft_font *font;
 static struct wl_display *display;
@@ -1008,6 +1015,7 @@ main(int argc, char **argv)
         wl_list_for_each(m, &monitors, link)
                 destroymon(m);
 
+        dscm_config_cleanup();
 	zwlr_layer_shell_v1_destroy(layer_shell);
 	fcft_destroy(font);
 	wl_shm_destroy(shm);

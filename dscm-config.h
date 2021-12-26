@@ -4,13 +4,13 @@ SCM config;
 
 /* Config variable definitions. */
 /* These will be automatically set from the guile config. */
-static uint32_t height;
-static int exclusive            = -1;
-static int adjustwidth          = 0;
-static int isbottom             = 0;
-static int usewmcolorscheme     = 0;
-static int borderpx             = 0;
-static char *fontstr            = "";
+static uint32_t height                  = 0;
+static int exclusive                    = -1;
+static int adjustwidth                  = 0;
+static int isbottom                     = 0;
+static int usewmcolorscheme             = 0;
+static int borderpx                     = 0;
+static char *fontstr                    = "";
 
 /* positioning */
 static enum align titlealign = ALIGN_L, subalign = ALIGN_R;
@@ -18,6 +18,12 @@ static int layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;;
 static int anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
                     ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
 		    ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
+
+/* blocks */
+static Block *titleblocks               = NULL;
+static Block *subblocks                 = NULL;
+static unsigned int numsubblocks        = 0;
+static unsigned int numtitleblocks      = 0;
 
 /* default colors */
 static pixman_color_t
@@ -41,6 +47,17 @@ static pixman_color_t
 	};
 
 static inline void
+dscm_parse_block(unsigned int index, SCM block, void *data)
+{
+        ((Block*)data)[index] = (Block){
+                .signal = dscm_alist_get_int(block, "signal"),
+                .interval = dscm_alist_get_int(block, "interval"),
+                .click = dscm_alist_get_proc_pointer(block, "click"),
+                .render = dscm_alist_get_proc_pointer(block, "render")
+        };
+}
+
+static inline void
 dscm_config_parse(char *configfile)
 {
         SCM eval, barlayer, twalign, swalign;
@@ -62,9 +79,16 @@ dscm_config_parse(char *configfile)
                 anchor ^= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
                           ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM;
         if (!usewmcolorscheme) {
-                parse_color(dscm_alist_get_string(config, "background-color"), &bgcolor);
-                parse_color(dscm_alist_get_string(config, "border-color"), &bordercolor);
-                parse_color(dscm_alist_get_string(config, "foreground-color"), &fgcolor);
+                char *bgstr, *fgstr, *borderstr;
+                bgstr = dscm_alist_get_string(config, "background-color");
+                fgstr = dscm_alist_get_string(config, "foreground-color");
+                borderstr = dscm_alist_get_string(config, "border-color");
+                parse_color(bgstr, &bgcolor);
+                parse_color(fgstr, &fgcolor);
+                parse_color(borderstr, &bordercolor);
+                free(bgstr);
+                free(fgstr);
+                free(borderstr);
         }
 
         barlayer = dscm_alist_get(config, "layer");
@@ -78,4 +102,17 @@ dscm_config_parse(char *configfile)
         swalign = dscm_alist_get(config, "sub-align");
         eval = scm_primitive_eval(swalign);
         subalign = (enum align)scm_to_int(eval);
+
+        titleblocks = dscm_iterate_list(dscm_alist_get(config, "title-blocks"),
+                sizeof(Block), &dscm_parse_block, &numtitleblocks);
+        subblocks = dscm_iterate_list(dscm_alist_get(config, "sub-blocks"),
+                sizeof(Block), &dscm_parse_block, &numsubblocks);
+}
+
+static inline void
+dscm_config_cleanup()
+{
+        free(titleblocks);
+        free(subblocks);
+        free(fontstr);
 }
