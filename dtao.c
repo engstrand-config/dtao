@@ -87,16 +87,12 @@ static struct dscm_v1 *dscm;
 static struct wl_surface *activesurface;
 static struct wl_list monitors;
 
-static Block *dirtysubblock;
-static Block *dirtytitleblock;
 static Monitor *selmon;
 static char *namespace = "dtao";
-static char line[MAX_LINE_LEN];
-static char lastline[MAX_LINE_LEN];
+static char titlestatus[MAX_LINE_LEN];
+static char substatus[MAX_LINE_LEN];
 static bool running = true;
 static bool cawaiting = false;
-static bool eat_line = false;
-static int linerem;
 static uint32_t TAGMASK = 0;
 static uint32_t savedx = 0, mousex = 0, mousey = 0;
 
@@ -137,6 +133,8 @@ static void seat_handle_capabilities(void *data, struct wl_seat *seat,
 	enum wl_seat_capability caps);
 static void setupmon(Monitor *m);
 static void updateblock(Block *b);
+static int updateblocks(unsigned int iteration, char *dest, Block *blocks,
+        unsigned int numblocks);
 static void updatestatus(unsigned int iteration);
 static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 
@@ -226,10 +224,11 @@ createmon(struct wl_output *output, uint32_t name)
         setupmon(m);
 }
 
+// TODO: Replace with two separate drawbar; one for title and one for sub.
 void
 drawbar(Monitor *m)
 {
-	m->wl_buffer = draw_frame(lastline, m);
+	m->wl_buffer = draw_frame(titlestatus, m);
 	if (!m->wl_buffer)
 		return;
 	wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
@@ -471,7 +470,7 @@ event_loop(void)
         /* initial draw */
         updatestatus(0);
 
-        for (unsigned int i = 0; running; i++) {
+        for (unsigned int i = 1; running; i++) {
 		fd_set rfds;
 		FD_ZERO(&rfds);
 		FD_SET(wlfd, &rfds);
@@ -884,21 +883,20 @@ updateblock(Block *b)
         b->length = scm_to_locale_stringbuf(ret, b->text, MAX_BLOCK_LEN);
 }
 
-void
-updatestatus(unsigned int iteration)
+int
+updateblocks(unsigned int iteration, char *dest, Block *blocks,
+        unsigned int numblocks)
 {
         Block *b, *dirty = NULL;
         size_t length = 0;
-        char *cursor = lastline;
-
+        char *cursor = dest;
 
         // TODO: Support delimiters
         // TODO: Render sub-blocks
-        // TODO: Modules must be imported at top of config file
-        for (unsigned int i = 0; i < numtitleblocks; i++) {
-                b = &titleblocks[i];
+        // TODO: Remove length and use only *cursor
+        for (unsigned int i = 0; i < numblocks; i++) {
+                b = &blocks[i];
                 if (iteration == 0 || (b->interval > 0 && iteration % b->interval == 0)) {
-                        printf("I run: %d\n", i);
                         updateblock(b);
                         if (memcmp(b->prevtext, b->text, b->length) != 0)
                                 dirty = b;
@@ -915,9 +913,22 @@ updatestatus(unsigned int iteration)
                 cursor += b->length;
         }
         if (dirty) {
-                lastline[MIN(MAX_LINE_LEN - 1, length)] = '\0';
-                drawbars();
+                dest[MIN(MAX_LINE_LEN - 1, length)] = '\0';
+                return 1;
         }
+        return 0;
+}
+
+void
+updatestatus(unsigned int i)
+{
+        int rendertitle, rendersub;
+        rendertitle = updateblocks(i, titlestatus, titleblocks, numtitleblocks);
+        rendersub = updateblocks(i, titlestatus, titleblocks, numtitleblocks);
+        /* TODO: Draw title and subwindow separately, rather than relying on
+         * ^tw() and ^sw(). Only draw if updateblocks(..) returns 1. */
+        if (rendertitle || rendersub || i == 0)
+                drawbars();
 }
 
 void
@@ -938,6 +949,7 @@ dscm_layout(void *data, struct dscm_v1 *d, const char *name)
 {
 }
 
+// TODO: Only add listener for colorscheme event if usewmcolorscheme == true
 void
 dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
         const char *border, const char *focus, const char *text)
