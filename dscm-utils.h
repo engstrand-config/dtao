@@ -91,11 +91,11 @@ dscm_call_block_callback(void *data)
 }
 
 // TODO: Replace void *data with the block state type
-static inline void
+static inline SCM
 dscm_safe_call(scm_t_bits *ptr, void *data)
 {
         if (ptr == NULL)
                 BARF("dscm: could not call proc that is NULL");
         dscm_call_data_t wrapper = {.proc = SCM_PACK_POINTER(ptr), .args = data};
-        scm_c_with_continuation_barrier(&dscm_call_block_callback, &wrapper);
+        return scm_c_with_continuation_barrier(&dscm_call_block_callback, &wrapper);
 }

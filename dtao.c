@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/select.h>
+#include <sys/timerfd.h>
 #include <time.h>
 #include <unistd.h>
 #include <wayland-client.h>
@@ -38,6 +39,7 @@
 
 /* Includes the newline character */
 #define MAX_LINE_LEN 8192
+#define MAX_BLOCK_LEN 64
 #define MAX_CLICKABLE_AREAS 64
 #define MAX_CLICKABLE_AREA_CMD_LEN 128
 
@@ -69,8 +71,9 @@ typedef struct {
 typedef struct {
         scm_t_bits *render;
         scm_t_bits *click;
-        char *prevtext, *curtext;
+        char prevtext[MAX_BLOCK_LEN], text[MAX_BLOCK_LEN];
         uint32_t signal, interval;
+        size_t length;
 } Block;
 
 /* variables */
@@ -84,11 +87,13 @@ static struct dscm_v1 *dscm;
 static struct wl_surface *activesurface;
 static struct wl_list monitors;
 
+static Block *dirtysubblock;
+static Block *dirtytitleblock;
 static Monitor *selmon;
 static char *namespace = "dtao";
 static char line[MAX_LINE_LEN];
 static char lastline[MAX_LINE_LEN];
-static bool run_display = true;
+static bool running = true;
 static bool cawaiting = false;
 static bool eat_line = false;
 static int linerem;
@@ -109,7 +114,6 @@ static void handle_global(void *data, struct wl_registry *registry,
         uint32_t name, const char *interface, uint32_t version);
 static void handle_global_remove(void *data, struct wl_registry *registry,
         uint32_t name);
-static void read_stdin(void);
 static void layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
         uint32_t serial, uint32_t w, uint32_t h);
 static void layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface);
@@ -132,6 +136,8 @@ static void pointer_handle_motion(void *data, struct wl_pointer *pointer,
 static void seat_handle_capabilities(void *data, struct wl_seat *seat,
 	enum wl_seat_capability caps);
 static void setupmon(Monitor *m);
+static void updateblock(Block *b);
+static void updatestatus(unsigned int iteration);
 static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 
 /* dscm protocol */
@@ -451,24 +457,37 @@ draw_frame(char *text, Monitor *m)
 void
 event_loop(void)
 {
-	int ret;
-	int wlfd = wl_display_get_fd(display);
+        char dummy[8];
+        struct itimerspec spec;
+	int ret, tfd, wlfd = wl_display_get_fd(display);
 
-	while (run_display) {
+        spec.it_interval = (struct timespec){.tv_sec = updateinterval, .tv_nsec = 0};
+        spec.it_value = (struct timespec){.tv_sec = 1, .tv_nsec = 0};
+        if ((tfd = timerfd_create(CLOCK_REALTIME,  0)) < 0)
+                EBARF("timerfd_create");
+        if (timerfd_settime(tfd, 0, &spec, NULL) < 0)
+                EBARF("timerfd_settime");
+
+        /* initial draw */
+        updatestatus(0);
+
+        for (unsigned int i = 0; running; i++) {
 		fd_set rfds;
 		FD_ZERO(&rfds);
-		FD_SET(STDIN_FILENO, &rfds);
 		FD_SET(wlfd, &rfds);
+		FD_SET(tfd, &rfds);
 
 		/* Does this need to be inside the loop? */
 		wl_display_flush(display);
 
-		ret = select(wlfd + 1, &rfds, NULL, NULL, NULL);
+		ret = select(MAX(wlfd, tfd) + 1, &rfds, NULL, NULL, NULL);
 		if (ret < 0)
 			EBARF("select");
 
-		if (FD_ISSET(STDIN_FILENO, &rfds))
-			read_stdin();
+                if (FD_ISSET(tfd, &rfds)) {
+                        updatestatus(i);
+                        read(tfd, dummy, 8);
+                }
 
 		if (FD_ISSET(wlfd, &rfds))
 			if (wl_display_dispatch(display) == -1)
@@ -563,46 +582,6 @@ handle_global_remove(void *data, struct wl_registry *registry, uint32_t name)
 }
 
 void
-read_stdin(void)
-{
-	/* Read as much data as we can into line buffer */
-	ssize_t b = read(STDIN_FILENO, line + linerem, MAX_LINE_LEN - linerem);
-	if (b < 0)
-		EBARF("read");
-	if (b == 0) {
-		run_display = 0;
-		return;
-	}
-	linerem += b;
-
-	/* Handle each line in the buffer in turn */
-	char *curline, *end;
-	for (curline = line; (end = memchr(curline, '\n', linerem)); curline = end) {
-		*end++ = '\0';
-		linerem -= end - curline;
-
-		if (eat_line) {
-			eat_line = false;
-			continue;
-		}
-
-		/* Keep last line for redrawing purposes */
-		memcpy(lastline, curline, end - curline);
-	}
-
-	if (linerem == MAX_LINE_LEN || eat_line) {
-		/* Buffer is full, so discard current line */
-		linerem = 0;
-		eat_line = true;
-	} else if (linerem && curline != line) {
-		/* Shift any remaining data over */
-		memmove(line, curline, linerem);
-	}
-
-        drawbars();
-}
-
-void
 layer_surface_configure(void *data,
 		struct zwlr_layer_surface_v1 *surface,
 		uint32_t serial, uint32_t w, uint32_t h)
@@ -629,7 +608,7 @@ layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface)
 {
 	zwlr_layer_surface_v1_destroy(surface);
 	wl_surface_destroy(((Monitor*)data)->wl_surface);
-	run_display = false;
+	running = false;
 }
 
 int
@@ -893,6 +872,52 @@ setupmon(Monitor *m)
         zwlr_layer_surface_v1_set_anchor(m->layer_surface, anchor);
         wl_surface_commit(m->wl_surface);
         wl_display_roundtrip(display);
+}
+
+void
+updateblock(Block *b)
+{
+        SCM ret = dscm_safe_call(b->render, NULL);
+        if (!scm_is_string(ret))
+                return;
+        memcpy(b->prevtext, b->text, b->length);
+        b->length = scm_to_locale_stringbuf(ret, b->text, MAX_BLOCK_LEN);
+}
+
+void
+updatestatus(unsigned int iteration)
+{
+        Block *b, *dirty = NULL;
+        size_t length = 0;
+        char *cursor = lastline;
+
+
+        // TODO: Support delimiters
+        // TODO: Render sub-blocks
+        // TODO: Modules must be imported at top of config file
+        for (unsigned int i = 0; i < numtitleblocks; i++) {
+                b = &titleblocks[i];
+                if (iteration == 0 || (b->interval > 0 && iteration % b->interval == 0)) {
+                        printf("I run: %d\n", i);
+                        updateblock(b);
+                        if (memcmp(b->prevtext, b->text, b->length) != 0)
+                                dirty = b;
+                        length += b->length;
+                        if (length >= MAX_LINE_LEN - 1) {
+                                memcpy(cursor, b->text, (MAX_LINE_LEN - 1) - (length - b->length));
+                                break;
+                        } else {
+                                memcpy(cursor, b->text, b->length);
+                        }
+                } else {
+                        length += b->length;
+                }
+                cursor += b->length;
+        }
+        if (dirty) {
+                lastline[MIN(MAX_LINE_LEN - 1, length)] = '\0';
+                drawbars();
+        }
 }
 
 void

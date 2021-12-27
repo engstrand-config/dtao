@@ -11,6 +11,7 @@ static int isbottom                     = 0;
 static int usewmcolorscheme             = 0;
 static int borderpx                     = 0;
 static char *fontstr                    = "";
+static int updateinterval               = 1;
 
 /* positioning */
 static enum align titlealign = ALIGN_L, subalign = ALIGN_R;
