@@ -28,6 +28,7 @@
 #define EBARF(fmt, ...)		BARF(fmt ": %s", ##__VA_ARGS__, strerror(errno))
 #define MIN(a, b)               ((a) < (b) ? (a) : (b))
 #define MAX(a, b)               ((a) > (b) ? (a) : (b))
+#define FLAG_SET(a, b)          (a & (1 << (b - 1)))
 
 #define PROGRAM "dtao"
 #define VERSION "0.1"
@@ -44,7 +45,7 @@
 #define MAX_CLICKABLE_AREA_CMD_LEN 128
 
 /* enums */
-enum window { TITLE_WINDOW, SUB_WINDOW };
+enum window { WINDOW_UNSET, WINDOW_TITLE, WINDOW_SUB };
 enum align { ALIGN_UNSET, ALIGN_C, ALIGN_L, ALIGN_R };
 
 typedef struct {
@@ -64,6 +65,7 @@ typedef struct {
         struct wl_buffer *wl_buffer;
         struct zwlr_layer_surface_v1 *layer_surface;
         struct dscm_monitor_v1 *dscm;
+        pixman_image_t *swlayer, *twlayer;
         ClickableArea cas[MAX_CLICKABLE_AREAS];
         uint32_t name, width, stride, bufsize, numcas, layout, activetags;
         char *title;
@@ -100,13 +102,14 @@ static uint32_t savedx = 0, mousex = 0, mousey = 0;
 /* function declarations */
 static int allocate_shm_file(size_t size);
 static void createmon(struct wl_output *output, uint32_t name);
+static void destroymon(Monitor *m);
+static struct wl_buffer *draw_frame(Monitor *m, enum window w);
 static void drawbar(Monitor *m, enum window w);
 static void drawbars(enum window w);
-static void destroymon(Monitor *m);
-static struct wl_buffer *draw_frame(char *text, Monitor *m);
+static void drawtext(char *text, Monitor *m, pixman_image_t *bar, enum align align);
 static void event_loop(void);
 static char *handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg,
-        pixman_color_t *fg, uint32_t *xpos, uint32_t *ypos, bool *istw);
+        pixman_color_t *fg, uint32_t *xpos, uint32_t *ypos);
 static void handle_global(void *data, struct wl_registry *registry,
         uint32_t name, const char *interface, uint32_t version);
 static void handle_global_remove(void *data, struct wl_registry *registry,
@@ -114,8 +117,7 @@ static void handle_global_remove(void *data, struct wl_registry *registry,
 static void layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
         uint32_t serial, uint32_t w, uint32_t h);
 static void layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface);
-static int parse_clickable_area(char *str, Monitor *m, uint32_t *xpos,
-        uint32_t *ypos, bool istw);
+static int parse_clickable_area(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos);
 static int parse_color(const char *str, pixman_color_t *clr);
 static int parse_movement(char *str, Monitor *m, uint32_t *xpos,
         uint32_t *ypos, uint32_t xoffset, uint32_t yoffset);
@@ -224,11 +226,10 @@ createmon(struct wl_output *output, uint32_t name)
         setupmon(m);
 }
 
-// TODO: Replace with two separate drawbar; one for title and one for sub.
 void
 drawbar(Monitor *m, enum window w)
 {
-	m->wl_buffer = draw_frame(w == SUB_WINDOW ? substatus : titlestatus, m);
+	m->wl_buffer = draw_frame(m, w);
 	if (!m->wl_buffer)
 		return;
 	wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
@@ -247,14 +248,143 @@ drawbars(enum window w)
 void
 destroymon(Monitor *m)
 {
+        pixman_image_unref(m->twlayer);
+        pixman_image_unref(m->swlayer);
         dscm_monitor_v1_destroy(m->dscm);
         zwlr_layer_surface_v1_destroy(m->layer_surface);
         wl_surface_destroy(m->wl_surface);
         wl_list_remove(&m->link);
 }
 
+void
+drawtext(char *text, Monitor *m, pixman_image_t *layer, enum align align)
+{
+        pixman_color_t textbgcolor, textfgcolor;
+        pixman_image_t *fgfill, *bglayer, *fglayer;
+        uint32_t yoffset, heightoffset, codepoint, xdraw,
+                xpos = 0, ypos, lastcp = 0, state = UTF8_ACCEPT;
+
+	/* Colors (premultiplied!) */
+	textbgcolor = bgcolor;
+	textfgcolor = fgcolor;
+
+	fgfill = pixman_image_create_solid_fill(&textfgcolor);
+	bglayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+                        m->width, height, NULL, m->width * 4);
+	fglayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+			m->width, height, NULL, m->width * 4);
+
+        yoffset = isbottom ? borderpx : 0;
+        heightoffset = isbottom ? 0 : borderpx;
+        ypos = (height + heightoffset + font->ascent - font->descent) / 2;
+
+        // TODO: Remove this
+	m->numcas = 0;
+
+	for (char *p = text; *p; p++) {
+		/* Check for inline ^ commands */
+		if (state == UTF8_ACCEPT && *p == '^') {
+			p++;
+			if (*p != '^') {
+				p = handle_cmd(p, m, &textbgcolor, &textfgcolor, &xpos, &ypos);
+				pixman_image_unref(fgfill);
+				fgfill = pixman_image_create_solid_fill(&textfgcolor);
+				continue;
+			}
+		}
+
+		/* Returns nonzero if more bytes are needed */
+		if (utf8decode(&state, &codepoint, *p))
+			continue;
+
+		/* Turn off subpixel rendering, which complicates things when
+		 * mixed with alpha channels */
+		const struct fcft_glyph *glyph = fcft_glyph_rasterize(font, codepoint,
+				FCFT_SUBPIXEL_NONE);
+		if (!glyph)
+			continue;
+
+		/* Adjust x position based on kerning with previous glyph */
+		long x_kern = 0;
+		if (lastcp)
+			fcft_kerning(font, lastcp, codepoint, &x_kern, NULL);
+		xpos += x_kern;
+		lastcp = codepoint;
+
+		/* Detect and handle pre-rendered glyphs (e.g. emoji) */
+		if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
+			/* Only the alpha channel of the mask is used, so we can
+			 * use fgfill here to blend prerendered glyphs with the
+			 * same opacity */
+			pixman_image_composite32(
+				PIXMAN_OP_OVER, glyph->pix, fgfill, fglayer, 0, 0, 0, 0,
+				xpos + glyph->x, ypos - glyph->y, glyph->width, glyph->height);
+		} else {
+			/* Applying the foreground color here would mess up
+			 * component alphas for subpixel-rendered text, so we
+			 * apply it when blending. */
+			pixman_image_composite32(
+				PIXMAN_OP_OVER, fgfill, glyph->pix, fglayer, 0, 0, 0, 0,
+				xpos + glyph->x, ypos - glyph->y, glyph->width, glyph->height);
+		}
+
+		if (xpos < m->width) {
+                        if (textbgcolor.alpha != 0x0000)
+                                pixman_image_fill_boxes(PIXMAN_OP_OVER, bglayer,
+                                                &textbgcolor, 1, &(pixman_box32_t){
+                                                        .x1 = xpos,
+                                                        .x2 = MIN(xpos + glyph->advance.x, m->width),
+                                                        .y1 = yoffset,
+                                                        .y2 = height - heightoffset,
+                                                });
+		}
+
+		/* increment pen position */
+		xpos += glyph->advance.x;
+		ypos += glyph->advance.y;
+	}
+	pixman_image_unref(fgfill);
+
+	if (state != UTF8_ACCEPT)
+		fprintf(stderr, "malformed UTF-8 sequence\n");
+
+        switch (align) {
+                case ALIGN_C:
+                        xdraw = (m->width - xpos) / 2;
+                        break;
+                case ALIGN_R:
+                        xdraw = m->width - xpos;
+                        break;
+                case ALIGN_L:
+                default:
+                        xdraw = 0;
+                        break;
+        }
+
+	pixman_image_composite32(PIXMAN_OP_OVER, bglayer, NULL, layer, 0, 0, 0, 0,
+			xdraw, 0, xpos, height);
+	pixman_image_composite32(PIXMAN_OP_OVER, fglayer, NULL, layer, 0, 0, 0, 0,
+			xdraw, 0, xpos, height);
+
+        // TODO: Use wl_list?
+        /* We must modify the x and y coordinates of the clickable areas */
+        /* to account for the draw offset of the sub-window. */
+        // TODO: Add clickable area directly in text renderer
+        /* ClickableArea *entry; */
+        /* for (uint32_t i = 0; i < m->numcas; i++) { */
+        /*         entry = &(m->cas[i]); */
+        /*         if (!entry->istw) { */
+        /*                 entry->fromx = entry->fromx + xdraw; */
+        /*                 entry->tox = entry->tox + xdraw; */
+        /*         } */
+        /* } */
+
+	pixman_image_unref(bglayer);
+	pixman_image_unref(fglayer);
+}
+
 struct wl_buffer *
-draw_frame(char *text, Monitor *m)
+draw_frame(Monitor *m, enum window w)
 {
 	/* Allocate buffer to be attached to the surface */
 	int fd = allocate_shm_file(m->bufsize);
@@ -276,178 +406,22 @@ draw_frame(char *text, Monitor *m)
 	wl_shm_pool_destroy(pool);
 	close(fd);
 
-	/* Colors (premultiplied!) */
-	pixman_color_t textbgcolor = bgcolor;
-	pixman_color_t textfgcolor = fgcolor;
-
 	/* Pixman image corresponding to main buffer */
 	pixman_image_t *bar = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-			m->width, height, data, m->width * 4);
+			m->width, height, data, m->stride);
 
         if (!adjustwidth)
                 pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
                                 &(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
-
-        /* Sub-window layers */
-	pixman_image_t *swbg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-			m->width, height, NULL, m->width * 4);
-	pixman_image_t *swfg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-			m->width, height, NULL, m->width * 4);
-
-        /* Title window layers */
-	pixman_image_t *twbg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-			m->width, height, NULL, m->width * 4);
-	pixman_image_t *twfg = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-			m->width, height, NULL, m->width * 4);
-
-	pixman_image_t *fgfill = pixman_image_create_solid_fill(&textfgcolor);
-
-        uint32_t yoffset = isbottom ? borderpx : 0;
-        uint32_t heightoffset = isbottom ? 0 : borderpx;
-        uint32_t twxpos = 0, swxpos = 0, twypos, swypos;
-	/* start drawing at center-left (ypos sets the text baseline) */
-        twypos = swypos = (height + heightoffset + font->ascent - font->descent) / 2;
-
-        /* Draw in sub-window layer by default */
-	uint32_t *xpos = &swxpos;
-	uint32_t *ypos = &swypos;
-
-	m->numcas = 0;
-
-        bool istw = false;
-        pixman_image_t *fglayer = swfg, *bglayer = swbg;
-	uint32_t codepoint, lastcp = 0, state = UTF8_ACCEPT;
-
-	for (char *p = text; *p; p++) {
-		/* Check for inline ^ commands */
-		if (state == UTF8_ACCEPT && *p == '^') {
-			p++;
-			if (*p != '^') {
-				p = handle_cmd(p, m, &textbgcolor, &textfgcolor, xpos, ypos, &istw);
-				pixman_image_unref(fgfill);
-				fgfill = pixman_image_create_solid_fill(&textfgcolor);
-                                if (istw) {
-                                        xpos = &twxpos;
-                                        ypos = &twypos;
-                                        bglayer = twbg;
-                                        fglayer = twfg;
-                                } else {
-                                        xpos = &swxpos;
-                                        ypos = &swypos;
-                                        bglayer = swbg;
-                                        fglayer = swfg;
-                                }
-				continue;
-			}
-		}
-
-		/* Returns nonzero if more bytes are needed */
-		if (utf8decode(&state, &codepoint, *p))
-			continue;
-
-		/* Turn off subpixel rendering, which complicates things when
-		 * mixed with alpha channels */
-		const struct fcft_glyph *glyph = fcft_glyph_rasterize(font, codepoint,
-				FCFT_SUBPIXEL_NONE);
-		if (!glyph)
-			continue;
-
-		/* Adjust x position based on kerning with previous glyph */
-		long x_kern = 0;
-		if (lastcp)
-			fcft_kerning(font, lastcp, codepoint, &x_kern, NULL);
-		*xpos += x_kern;
-		lastcp = codepoint;
-
-		/* Detect and handle pre-rendered glyphs (e.g. emoji) */
-		if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
-			/* Only the alpha channel of the mask is used, so we can
-			 * use fgfill here to blend prerendered glyphs with the
-			 * same opacity */
-			pixman_image_composite32(
-				PIXMAN_OP_OVER, glyph->pix, fgfill, fglayer, 0, 0, 0, 0,
-				*xpos + glyph->x, *ypos - glyph->y, glyph->width, glyph->height);
-		} else {
-			/* Applying the foreground color here would mess up
-			 * component alphas for subpixel-rendered text, so we
-			 * apply it when blending. */
-			pixman_image_composite32(
-				PIXMAN_OP_OVER, fgfill, glyph->pix, fglayer, 0, 0, 0, 0,
-				*xpos + glyph->x, *ypos - glyph->y, glyph->width, glyph->height);
-		}
-
-		if (*xpos < m->width) {
-                        if (textbgcolor.alpha != 0x0000)
-                                pixman_image_fill_boxes(PIXMAN_OP_OVER, bglayer,
-                                                &textbgcolor, 1, &(pixman_box32_t){
-                                                        .x1 = *xpos,
-                                                        .x2 = MIN(*xpos + glyph->advance.x, m->width),
-                                                        .y1 = yoffset,
-                                                        .y2 = height - heightoffset,
-                                                });
-		}
-
-		/* increment pen position */
-		*xpos += glyph->advance.x;
-		*ypos += glyph->advance.y;
-	}
-	pixman_image_unref(fgfill);
-
-	if (state != UTF8_ACCEPT)
-		fprintf(stderr, "malformed UTF-8 sequence\n");
-
-        uint32_t swxdraw, twxdraw;
-
-        switch (titlealign) {
-                case ALIGN_C:
-                        twxdraw = (m->width - twxpos) / 2;
-                        break;
-                case ALIGN_R:
-                        twxdraw = m->width - twxpos;
-                        break;
-                case ALIGN_L:
-                default:
-                        twxdraw = 0;
-                        break;
+        if (FLAG_SET(w, WINDOW_TITLE)) {
+                drawtext(titlestatus, m, m->twlayer, titlealign);
+        } else if (FLAG_SET(w, WINDOW_SUB)) {
+                drawtext(substatus, m, m->swlayer, subalign);
         }
-        switch (subalign) {
-                case ALIGN_L:
-                        swxdraw = 0;
-                        break;
-                case ALIGN_C:
-                        swxdraw = (m->width - swxpos) / 2;
-                        break;
-                case ALIGN_R:
-                default:
-                        swxdraw = m->width - swxpos;
-                        break;
-        }
-
-	pixman_image_composite32(PIXMAN_OP_OVER, swbg, NULL, bar, 0, 0, 0, 0,
-			swxdraw, 0, swxpos, height);
-        pixman_image_composite32(PIXMAN_OP_OVER, twbg, NULL, bar, 0, 0, 0, 0,
-                        twxdraw, 0, m->width - twxpos, height);
-
-	pixman_image_composite32(PIXMAN_OP_OVER, swfg, NULL, bar, 0, 0, 0, 0,
-			swxdraw, 0, swxpos, height);
-        pixman_image_composite32(PIXMAN_OP_OVER, twfg, NULL, bar, 0, 0, 0, 0,
-                        twxdraw, 0, m->width - twxpos, height);
-
-        /* We must modify the x and y coordinates of the clickable areas */
-        /* to account for the draw offset of the sub-window. */
-        ClickableArea *entry;
-        for (uint32_t i = 0; i < m->numcas; i++) {
-                entry = &(m->cas[i]);
-                if (!entry->istw) {
-                        entry->fromx = entry->fromx + swxdraw;
-                        entry->tox = entry->tox + swxdraw;
-                }
-        }
-
-	pixman_image_unref(swbg);
-	pixman_image_unref(swfg);
-	pixman_image_unref(twbg);
-	pixman_image_unref(twfg);
+	pixman_image_composite32(PIXMAN_OP_OVER, m->swlayer, NULL, bar, 0, 0, 0, 0,
+			0, 0, m->width, height);
+	pixman_image_composite32(PIXMAN_OP_OVER, m->twlayer, NULL, bar, 0, 0, 0, 0,
+			0, 0, m->width, height);
 	pixman_image_unref(bar);
 	munmap(data, m->bufsize);
 	return buffer;
@@ -496,7 +470,7 @@ event_loop(void)
 
 char *
 handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
-        uint32_t *xpos, uint32_t *ypos, bool *istw)
+        uint32_t *xpos, uint32_t *ypos)
 {
 	char *arg, *end;
 
@@ -527,12 +501,8 @@ handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
 	} else if (!strcmp(cmd, "rx")) {
 		*xpos = savedx;
 	} else if (!strcmp(cmd, "ca")) {
-		if (parse_clickable_area(arg, m, xpos, ypos, *istw))
+		if (parse_clickable_area(arg, m, xpos, ypos))
 			fprintf(stderr, "Invalid clickable area command argument \"%s\"\n", arg);
-        } else if (!strcmp(cmd, "tw")) {
-                *istw = true;
-        } else if (!strcmp(cmd, "sw")) {
-                *istw = false;
 	} else {
 		fprintf(stderr, "Unrecognized command \"%s\"\n", cmd);
 	}
@@ -587,20 +557,23 @@ layer_surface_configure(void *data,
 {
         /* Layer-surface setup adapted from layer-shell example in [wlroots] */
         Monitor *m = data;
-	height = h;
-	m->width = w;
-	m->stride = m->width * 4;
-	m->bufsize = m->stride * height;
 
         if (!m || !m->wl_surface || !m->layer_surface)
                 BARF("failed to configure layer surface, no monitor defined.");
 
+	height = h;
+	m->width = w;
+	m->stride = m->width * 4;
+	m->bufsize = m->stride * height;
+	m->twlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+			m->width, height, NULL, m->stride);
+	m->swlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+			m->width, height, NULL, m->stride);
 	if (exclusive > 0)
 		exclusive = height;
 	zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, exclusive);
 	zwlr_layer_surface_v1_ack_configure(surface, serial);
-        drawbar(m, TITLE_WINDOW);
-        drawbar(m, SUB_WINDOW);
+        drawbar(m, WINDOW_TITLE | WINDOW_SUB);
 }
 
 void
@@ -612,7 +585,7 @@ layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface)
 }
 
 int
-parse_clickable_area(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, bool istw)
+parse_clickable_area(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos)
 {
         ClickableArea *entry = &(m->cas[m->numcas]);
 	if (cawaiting) {
@@ -665,9 +638,6 @@ parse_clickable_area(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, bool
 		entry->tox = 0;
 		entry->toy = 0;
                 entry->button = button;
-
-                /* Keep track of the buffer in which the clickable entry is drawn */
-                entry->istw = istw;
 
 		strcpy(entry->cmd, cmd);
 		cawaiting = true;
@@ -867,7 +837,6 @@ setupmon(Monitor *m)
         zwlr_layer_surface_v1_add_listener(m->layer_surface,
                         &layer_surface_listener, m);
         dscm_monitor_v1_add_listener(m->dscm, &dscm_monitor_listener, m);
-
         zwlr_layer_surface_v1_set_size(m->layer_surface, m->width, height);
         zwlr_layer_surface_v1_set_anchor(m->layer_surface, anchor);
         wl_surface_commit(m->wl_surface);
@@ -913,10 +882,13 @@ updateblocks(unsigned int iteration, char *dest, Block *blocks)
 void
 updatestatus(unsigned int i)
 {
+        enum window w = WINDOW_UNSET;
         if (updateblocks(i, titlestatus, titleblocks) || i == 0)
-                drawbars(TITLE_WINDOW);
+                w |= WINDOW_TITLE;
         if (updateblocks(i, substatus, subblocks) || i == 0)
-                drawbars(SUB_WINDOW);
+                w |= WINDOW_SUB;
+        if (w != WINDOW_UNSET)
+                drawbars(w);
 }
 
 void
@@ -947,8 +919,7 @@ dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
         parse_color(root, &bgcolor);
         parse_color(text, &fgcolor);
         parse_color(border, &bordercolor);
-        drawbars(TITLE_WINDOW);
-        drawbars(SUB_WINDOW);
+        drawbars(WINDOW_TITLE | WINDOW_SUB);
 }
 
 void
