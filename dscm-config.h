@@ -23,8 +23,6 @@ static int anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
 /* blocks */
 static Block *titleblocks               = NULL;
 static Block *subblocks                 = NULL;
-static unsigned int numsubblocks        = 0;
-static unsigned int numtitleblocks      = 0;
 
 /* default colors */
 static pixman_color_t
@@ -105,9 +103,9 @@ dscm_config_parse(char *configfile)
         subalign = (enum align)scm_to_int(eval);
 
         titleblocks = dscm_iterate_list(dscm_alist_get(config, "title-blocks"),
-                sizeof(Block), &dscm_parse_block, &numtitleblocks);
+                sizeof(Block), &dscm_parse_block);
         subblocks = dscm_iterate_list(dscm_alist_get(config, "sub-blocks"),
-                sizeof(Block), &dscm_parse_block, &numsubblocks);
+                sizeof(Block), &dscm_parse_block);
 }
 
 static inline void

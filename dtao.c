@@ -44,6 +44,7 @@
 #define MAX_CLICKABLE_AREA_CMD_LEN 128
 
 /* enums */
+enum window { TITLE_WINDOW, SUB_WINDOW };
 enum align { ALIGN_UNSET, ALIGN_C, ALIGN_L, ALIGN_R };
 
 typedef struct {
@@ -99,8 +100,8 @@ static uint32_t savedx = 0, mousex = 0, mousey = 0;
 /* function declarations */
 static int allocate_shm_file(size_t size);
 static void createmon(struct wl_output *output, uint32_t name);
-static void drawbar(Monitor *m);
-static void drawbars();
+static void drawbar(Monitor *m, enum window w);
+static void drawbars(enum window w);
 static void destroymon(Monitor *m);
 static struct wl_buffer *draw_frame(char *text, Monitor *m);
 static void event_loop(void);
@@ -132,9 +133,8 @@ static void pointer_handle_motion(void *data, struct wl_pointer *pointer,
 static void seat_handle_capabilities(void *data, struct wl_seat *seat,
 	enum wl_seat_capability caps);
 static void setupmon(Monitor *m);
-static void updateblock(Block *b);
-static int updateblocks(unsigned int iteration, char *dest, Block *blocks,
-        unsigned int numblocks);
+static int updateblock(Block *b);
+static int updateblocks(unsigned int iteration, char *dest, Block *blocks);
 static void updatestatus(unsigned int iteration);
 static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 
@@ -226,9 +226,9 @@ createmon(struct wl_output *output, uint32_t name)
 
 // TODO: Replace with two separate drawbar; one for title and one for sub.
 void
-drawbar(Monitor *m)
+drawbar(Monitor *m, enum window w)
 {
-	m->wl_buffer = draw_frame(titlestatus, m);
+	m->wl_buffer = draw_frame(w == SUB_WINDOW ? substatus : titlestatus, m);
 	if (!m->wl_buffer)
 		return;
 	wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
@@ -237,11 +237,11 @@ drawbar(Monitor *m)
 }
 
 void
-drawbars()
+drawbars(enum window w)
 {
         Monitor *m;
         wl_list_for_each(m, &monitors, link)
-                drawbar(m);
+                drawbar(m, w);
 }
 
 void
@@ -599,7 +599,8 @@ layer_surface_configure(void *data,
 		exclusive = height;
 	zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, exclusive);
 	zwlr_layer_surface_v1_ack_configure(surface, serial);
-        drawbar(m);
+        drawbar(m, TITLE_WINDOW);
+        drawbar(m, SUB_WINDOW);
 }
 
 void
@@ -873,62 +874,49 @@ setupmon(Monitor *m)
         wl_display_roundtrip(display);
 }
 
-void
+int
 updateblock(Block *b)
 {
         SCM ret = dscm_safe_call(b->render, NULL);
         if (!scm_is_string(ret))
-                return;
+                return 1;
         memcpy(b->prevtext, b->text, b->length);
-        b->length = scm_to_locale_stringbuf(ret, b->text, MAX_BLOCK_LEN);
+        b->length = MIN(MAX_BLOCK_LEN, scm_to_locale_stringbuf(ret, b->text, MAX_BLOCK_LEN));
+        return memcmp(b->prevtext, b->text, b->length);
 }
 
 int
-updateblocks(unsigned int iteration, char *dest, Block *blocks,
-        unsigned int numblocks)
+updateblocks(unsigned int iteration, char *dest, Block *blocks)
 {
-        Block *b, *dirty = NULL;
-        size_t length = 0;
-        char *cursor = dest;
+        Block *b;
+        int dirty = 0;
+        char *cursor = dest, *end = &dest[MAX_LINE_LEN - 1];
 
         // TODO: Support delimiters
-        // TODO: Render sub-blocks
-        // TODO: Remove length and use only *cursor
-        for (unsigned int i = 0; i < numblocks; i++) {
-                b = &blocks[i];
-                if (iteration == 0 || (b->interval > 0 && iteration % b->interval == 0)) {
-                        updateblock(b);
-                        if (memcmp(b->prevtext, b->text, b->length) != 0)
-                                dirty = b;
-                        length += b->length;
-                        if (length >= MAX_LINE_LEN - 1) {
-                                memcpy(cursor, b->text, (MAX_LINE_LEN - 1) - (length - b->length));
-                                break;
-                        } else {
-                                memcpy(cursor, b->text, b->length);
-                        }
-                } else {
-                        length += b->length;
-                }
-                cursor += b->length;
+        // TODO: Save length of previous block output and only
+        // re-render following blocks if the length has changed
+        // (assuming no following block has changed).
+        for (b = blocks; b->render; b++) {
+                if (iteration > 0 && (b->interval <= 0 || iteration % b->interval != 0))
+                        continue;
+                if (updateblock(b) != 0)
+                        dirty = 1;
+                memcpy(cursor, b->text, MIN(b->length, end - cursor));
+                if ((cursor += b->length) >= end)
+                        break;
         }
-        if (dirty) {
-                dest[MIN(MAX_LINE_LEN - 1, length)] = '\0';
-                return 1;
-        }
-        return 0;
+        if (dirty)
+                dest[MAX(MAX_LINE_LEN - 1, (end - cursor))] = '\0';
+        return dirty;
 }
 
 void
 updatestatus(unsigned int i)
 {
-        int rendertitle, rendersub;
-        rendertitle = updateblocks(i, titlestatus, titleblocks, numtitleblocks);
-        rendersub = updateblocks(i, titlestatus, titleblocks, numtitleblocks);
-        /* TODO: Draw title and subwindow separately, rather than relying on
-         * ^tw() and ^sw(). Only draw if updateblocks(..) returns 1. */
-        if (rendertitle || rendersub || i == 0)
-                drawbars();
+        if (updateblocks(i, titlestatus, titleblocks) || i == 0)
+                drawbars(TITLE_WINDOW);
+        if (updateblocks(i, substatus, subblocks) || i == 0)
+                drawbars(SUB_WINDOW);
 }
 
 void
@@ -959,7 +947,8 @@ dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
         parse_color(root, &bgcolor);
         parse_color(text, &fgcolor);
         parse_color(border, &bordercolor);
-        drawbars();
+        drawbars(TITLE_WINDOW);
+        drawbars(SUB_WINDOW);
 }
 
 void

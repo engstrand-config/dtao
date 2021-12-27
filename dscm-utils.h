@@ -49,18 +49,16 @@ dscm_get_list_item(SCM list, unsigned int index)
 
 static inline void *
 dscm_iterate_list(SCM list, size_t elem_size,
-        void (*iterator)(unsigned int, SCM, void*), unsigned int *length_var)
+        void (*iterator)(unsigned int, SCM, void*))
 {
         SCM item;
         unsigned int i = 0, length = 0;
         length = dscm_get_list_length(list);
-        void *allocated = calloc(length, elem_size);
+        void *allocated = calloc(length + 1, elem_size);
         for (; i < length; i++) {
                 item = dscm_get_list_item(list, i);
                 (*iterator)(i, item, allocated);
         }
-        if (length_var)
-                *length_var = length;
         return allocated;
 }
 
