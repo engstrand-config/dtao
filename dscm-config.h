@@ -13,7 +13,7 @@ static int borderpx                     = 0;
 static char *fontstr                    = "";
 static int updateinterval               = 1;
 static char *delimiter                  = NULL;
-static uint32_t spacing                 = 5;
+static uint32_t spacing                 = 10;
 
 /* positioning */
 static enum align titlealign = ALIGN_L, subalign = ALIGN_R;
@@ -87,7 +87,7 @@ dscm_config_parse(char *configfile)
 
         if (isbottom)
                 anchor ^= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-                          ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM;
+                          ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
         if (!usewmcolorscheme) {
                 char *bgstr, *fgstr, *borderstr;
                 bgstr = dscm_alist_get_string(config, "background-color");
