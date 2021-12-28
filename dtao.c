@@ -412,12 +412,15 @@ draw_frame(Monitor *m, enum window w)
 
         if (!adjustwidth)
                 pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
-                                &(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
-        if (FLAG_SET(w, WINDOW_TITLE)) {
-                drawtext(titlestatus, m, m->twlayer, titlealign);
-        } else if (FLAG_SET(w, WINDOW_SUB)) {
-                drawtext(substatus, m, m->swlayer, subalign);
-        }
+                        &(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
+        /* TODO: The current caching method is not working. */
+        /* if (FLAG_SET(w, WINDOW_TITLE)) { */
+        /*         drawtext(titlestatus, m, m->twlayer, titlealign); */
+        /* } else if (FLAG_SET(w, WINDOW_SUB)) { */
+        /*         drawtext(substatus, m, m->swlayer, subalign); */
+        /* } */
+        drawtext(titlestatus, m, m->twlayer, titlealign);
+        drawtext(substatus, m, m->swlayer, subalign);
 	pixman_image_composite32(PIXMAN_OP_OVER, m->swlayer, NULL, bar, 0, 0, 0, 0,
 			0, 0, m->width, height);
 	pixman_image_composite32(PIXMAN_OP_OVER, m->twlayer, NULL, bar, 0, 0, 0, 0,
