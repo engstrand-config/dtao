@@ -49,7 +49,7 @@ dscm_get_list_item(SCM list, unsigned int index)
 
 static inline void *
 dscm_iterate_list(SCM list, size_t elem_size,
-        void (*iterator)(unsigned int, SCM, void*))
+        void (*iterator)(unsigned int, SCM, void*, enum window w), enum window w)
 {
         SCM item;
         unsigned int i = 0, length = 0;
@@ -57,7 +57,7 @@ dscm_iterate_list(SCM list, size_t elem_size,
         void *allocated = calloc(length + 1, elem_size);
         for (; i < length; i++) {
                 item = dscm_get_list_item(list, i);
-                (*iterator)(i, item, allocated);
+                (*iterator)(i, item, allocated, w);
         }
         return allocated;
 }

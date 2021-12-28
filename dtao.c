@@ -54,8 +54,6 @@ typedef struct {
         uint32_t fromy;
         uint32_t toy;
         uint32_t button;
-        bool istw;
-        char cmd[MAX_CLICKABLE_AREA_CMD_LEN];
 } ClickableArea;
 
 typedef struct {
@@ -66,17 +64,20 @@ typedef struct {
         struct zwlr_layer_surface_v1 *layer_surface;
         struct dscm_monitor_v1 *dscm;
         pixman_image_t *swlayer, *twlayer;
-        ClickableArea cas[MAX_CLICKABLE_AREAS];
-        uint32_t name, width, stride, bufsize, numcas, layout, activetags;
+        uint32_t name, width, stride, bufsize, layout, activetags,
+                twxdraw, swxdraw;
         char *title;
 } Monitor;
 
 typedef struct {
+        enum window w;
+        struct wl_list clink;
         scm_t_bits *render;
         scm_t_bits *click;
         char prevtext[MAX_BLOCK_LEN], text[MAX_BLOCK_LEN];
         uint32_t signal, interval;
         size_t length;
+        ClickableArea ca;
 } Block;
 
 /* variables */
@@ -89,13 +90,13 @@ static struct zwlr_layer_shell_v1 *layer_shell;
 static struct dscm_v1 *dscm;
 static struct wl_surface *activesurface;
 static struct wl_list monitors;
+static struct wl_list cas;
 
 static Monitor *selmon;
 static char *namespace = "dtao";
 static char titlestatus[MAX_LINE_LEN];
 static char substatus[MAX_LINE_LEN];
 static bool running = true;
-static bool cawaiting = false;
 static uint32_t TAGMASK = 0;
 static uint32_t savedx = 0, mousex = 0, mousey = 0;
 
@@ -106,7 +107,8 @@ static void destroymon(Monitor *m);
 static struct wl_buffer *draw_frame(Monitor *m, enum window w);
 static void drawbar(Monitor *m, enum window w);
 static void drawbars(enum window w);
-static void drawtext(char *text, Monitor *m, pixman_image_t *bar, enum align align);
+static void drawtext(char *text, Monitor *m, Block *blocks, pixman_image_t *bar,
+        uint32_t *xdraw, enum align align);
 static void event_loop(void);
 static char *handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg,
         pixman_color_t *fg, uint32_t *xpos, uint32_t *ypos);
@@ -117,7 +119,6 @@ static void handle_global_remove(void *data, struct wl_registry *registry,
 static void layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
         uint32_t serial, uint32_t w, uint32_t h);
 static void layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface);
-static int parse_clickable_area(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos);
 static int parse_color(const char *str, pixman_color_t *clr);
 static int parse_movement(char *str, Monitor *m, uint32_t *xpos,
         uint32_t *ypos, uint32_t xoffset, uint32_t yoffset);
@@ -257,12 +258,15 @@ destroymon(Monitor *m)
 }
 
 void
-drawtext(char *text, Monitor *m, pixman_image_t *layer, enum align align)
+drawtext(char *text, Monitor *m, Block *blocks, pixman_image_t *layer,
+        uint32_t *xdraw, enum align align)
 {
+        char *p, *start;
+        Block *b = blocks;
         pixman_color_t textbgcolor, textfgcolor;
         pixman_image_t *fgfill, *bglayer, *fglayer;
-        uint32_t yoffset, heightoffset, codepoint, xdraw,
-                xpos = 0, ypos, lastcp = 0, state = UTF8_ACCEPT;
+        uint32_t yoffset, heightoffset, codepoint, ypos,
+                pos = 0, xpos = 0, lastcp = 0, state = UTF8_ACCEPT;
 
 	/* Colors (premultiplied!) */
 	textbgcolor = bgcolor;
@@ -278,10 +282,16 @@ drawtext(char *text, Monitor *m, pixman_image_t *layer, enum align align)
         heightoffset = isbottom ? 0 : borderpx;
         ypos = (height + heightoffset + font->ascent - font->descent) / 2;
 
-        // TODO: Remove this
-	m->numcas = 0;
-
-	for (char *p = text; *p; p++) {
+	for (p = start = text; *p; p++) {
+                pos = p - start;
+                /* Update the blocks clickable area, if any. */
+                if (b->click) {
+                        /* TODO: Must account for heightoffset */
+                        if (pos == 0)
+                                b->ca.fromx = xpos;
+                        if (pos == b->length)
+                                b->ca.tox = xpos;
+                }
 		/* Check for inline ^ commands */
 		if (state == UTF8_ACCEPT && *p == '^') {
 			p++;
@@ -342,6 +352,13 @@ drawtext(char *text, Monitor *m, pixman_image_t *layer, enum align align)
 		/* increment pen position */
 		xpos += glyph->advance.x;
 		ypos += glyph->advance.y;
+
+                /* Keep track of the block currently being parsed.
+                 * This is needed to add appropriate clickable areas. */
+                if (pos == b->length) {
+                        b++;
+                        start = p - 1;
+                }
 	}
 	pixman_image_unref(fgfill);
 
@@ -350,34 +367,21 @@ drawtext(char *text, Monitor *m, pixman_image_t *layer, enum align align)
 
         switch (align) {
                 case ALIGN_C:
-                        xdraw = (m->width - xpos) / 2;
+                        *xdraw = (m->width - xpos) / 2;
                         break;
                 case ALIGN_R:
-                        xdraw = m->width - xpos;
+                        *xdraw = m->width - xpos;
                         break;
                 case ALIGN_L:
                 default:
-                        xdraw = 0;
+                        *xdraw = 0;
                         break;
         }
 
 	pixman_image_composite32(PIXMAN_OP_OVER, bglayer, NULL, layer, 0, 0, 0, 0,
-			xdraw, 0, xpos, height);
+			*xdraw, 0, xpos, height);
 	pixman_image_composite32(PIXMAN_OP_OVER, fglayer, NULL, layer, 0, 0, 0, 0,
-			xdraw, 0, xpos, height);
-
-        // TODO: Use wl_list?
-        /* We must modify the x and y coordinates of the clickable areas */
-        /* to account for the draw offset of the sub-window. */
-        // TODO: Add clickable area directly in text renderer
-        /* ClickableArea *entry; */
-        /* for (uint32_t i = 0; i < m->numcas; i++) { */
-        /*         entry = &(m->cas[i]); */
-        /*         if (!entry->istw) { */
-        /*                 entry->fromx = entry->fromx + xdraw; */
-        /*                 entry->tox = entry->tox + xdraw; */
-        /*         } */
-        /* } */
+			*xdraw, 0, xpos, height);
 
 	pixman_image_unref(bglayer);
 	pixman_image_unref(fglayer);
@@ -419,8 +423,8 @@ draw_frame(Monitor *m, enum window w)
         /* } else if (FLAG_SET(w, WINDOW_SUB)) { */
         /*         drawtext(substatus, m, m->swlayer, subalign); */
         /* } */
-        drawtext(titlestatus, m, m->twlayer, titlealign);
-        drawtext(substatus, m, m->swlayer, subalign);
+        drawtext(titlestatus, m, titleblocks, m->twlayer, &m->twxdraw, titlealign);
+        drawtext(substatus, m, subblocks, m->swlayer, &m->swxdraw, subalign);
 	pixman_image_composite32(PIXMAN_OP_OVER, m->swlayer, NULL, bar, 0, 0, 0, 0,
 			0, 0, m->width, height);
 	pixman_image_composite32(PIXMAN_OP_OVER, m->twlayer, NULL, bar, 0, 0, 0, 0,
@@ -503,9 +507,6 @@ handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
 		savedx = *xpos;
 	} else if (!strcmp(cmd, "rx")) {
 		*xpos = savedx;
-	} else if (!strcmp(cmd, "ca")) {
-		if (parse_clickable_area(arg, m, xpos, ypos))
-			fprintf(stderr, "Invalid clickable area command argument \"%s\"\n", arg);
 	} else {
 		fprintf(stderr, "Unrecognized command \"%s\"\n", cmd);
 	}
@@ -564,7 +565,6 @@ layer_surface_configure(void *data,
         if (!m || !m->wl_surface || !m->layer_surface)
                 BARF("failed to configure layer surface, no monitor defined.");
 
-	height = h;
 	m->width = w;
 	m->stride = m->width * 4;
 	m->bufsize = m->stride * height;
@@ -585,68 +585,6 @@ layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface)
 	zwlr_layer_surface_v1_destroy(surface);
 	wl_surface_destroy(((Monitor*)data)->wl_surface);
 	running = false;
-}
-
-int
-parse_clickable_area(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos)
-{
-        ClickableArea *entry = &(m->cas[m->numcas]);
-	if (cawaiting) {
-		if(*str) {
-			fprintf(stderr, "Second clickable area command must have 0 arguments\n");
-			return 1;
-		}
-
-		entry->tox = *xpos;
-		entry->toy = *ypos;
-
-		if(entry->tox < entry->fromx) {
-			uint32_t temp = entry->tox;
-			entry->tox = entry->fromx;
-			entry->fromx = temp;
-		}
-		if(entry->toy < entry->fromy) {
-			uint32_t temp = entry->toy;
-                        entry->toy = entry->fromy;
-		        entry->fromy = temp;
-		}
-
-		entry->fromy -= font->ascent;
-
-                m->numcas++;
-		cawaiting = false;
-	} else {
-		if (!*str) {
-			fprintf(stderr, "Second clickable area command must have 2 arguments (0 provided)\n");
-			return 1;
-		}
-		int button = *str - '0';
-		if(button < 0 || button > 9) {
-			fprintf(stderr, "Invalid mouse button: %d", button);
-			return 1;
-		}
-		str++;
-		if (*str != ',') {
-			fprintf(stderr, "First clickable area command must have 2 arguments (1 provided)\n");
-			return 1;
-		}
-	    	char *cmd = ++str;
-		if (strlen(cmd) > MAX_CLICKABLE_AREA_CMD_LEN) {
-			fprintf(stderr, "Clickable area command exceeds maximum length (%d)\n", MAX_CLICKABLE_AREA_CMD_LEN);
-			return 1;
-		}
-
-		entry->fromx = *xpos;
-		entry->fromy = *ypos;
-		entry->tox = 0;
-		entry->toy = 0;
-                entry->button = button;
-
-		strcpy(entry->cmd, cmd);
-		cawaiting = true;
-	}
-
-	return 0;
 }
 
 int
@@ -758,30 +696,23 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
         if (!activesurface || !state)
                 return;
 
-        Monitor *m, *activemon = NULL;
+        Block *b;
+        uint32_t xoffset;
+        Monitor *m, *sel = NULL;
+
         wl_list_for_each(m, &monitors, link)
                 if (m->wl_surface == activesurface)
-                        activemon = m;
-
-        if (!activemon)
+                        sel = m;
+        if (!sel)
                 return;
-
-        for (uint32_t i = 0; i < activemon->numcas; i++) {
-                ClickableArea entry = activemon->cas[i];
-                if (entry.button == button - BTN_MOUSE &&
-                                entry.fromx <= mousex && mousex <= entry.tox &&
-                                entry.fromy <= mousey && mousey <= entry.toy) {
-                        FILE *script;
-                        script = popen(entry.cmd, "r");
-                        if (script != NULL) {
-                                while (1) {
-                                        char *line;
-                                        char buf[MAX_LINE_LEN];
-                                        line = fgets(buf, sizeof(buf), script);
-                                        if (line == NULL) break;
-                                }
-                        }
-                        pclose(script);
+        wl_list_for_each(b, &cas, clink) {
+                xoffset = b->w & WINDOW_TITLE ? sel->twxdraw : sel->swxdraw;
+                if (b->ca.button == button - BTN_MOUSE &&
+                            (b->ca.fromx + xoffset) <= mousex &&
+                            (b->ca.tox + xoffset) >= mousex &&
+                            b->ca.fromy <= mousey && mousey <= b->ca.toy) {
+                        dscm_safe_call(b->click, NULL);
+                        break;
                 }
         }
 }
@@ -963,6 +894,7 @@ int
 main(int argc, char **argv)
 {
 	int c;
+        Block *b;
         Monitor *m;
         char *configfile = NULL;
 
@@ -980,6 +912,9 @@ main(int argc, char **argv)
         if (!configfile)
                 BARF("error: config path must be set using '-c'");
 
+        wl_list_init(&cas);
+        wl_list_init(&monitors);
+
         /* Load guile config */
         scm_init_guile();
         dscm_register();
@@ -995,7 +930,9 @@ main(int argc, char **argv)
         if (!height)
                 height = font->height + font->descent + borderpx;
 
-        wl_list_init(&monitors);
+        /* Register mouse clicks for all vertical space of bar */
+        wl_list_for_each(b, &cas, clink)
+                b->ca.toy = height;
 
 	/* Set up display and protocols */
 	display = wl_display_connect(NULL);

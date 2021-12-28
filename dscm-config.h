@@ -46,14 +46,21 @@ static pixman_color_t
 	};
 
 static inline void
-dscm_parse_block(unsigned int index, SCM block, void *data)
+dscm_parse_block(unsigned int index, SCM block, void *data, enum window w)
 {
-        ((Block*)data)[index] = (Block){
+        Block *blocks = data;
+        scm_t_bits *click = dscm_alist_get_proc_pointer(block, "click");
+
+        blocks[index] = (Block){
+                .w = w,
                 .signal = dscm_alist_get_int(block, "signal"),
                 .interval = dscm_alist_get_int(block, "interval"),
-                .click = dscm_alist_get_proc_pointer(block, "click"),
-                .render = dscm_alist_get_proc_pointer(block, "render")
+                .click = click,
+                .render = dscm_alist_get_proc_pointer(block, "render"),
         };
+        /* TODO: Allow multiple click listeners, one for each type of button */
+        if (click)
+                wl_list_insert(&cas, &blocks[index].clink);
 }
 
 static inline void
@@ -103,9 +110,9 @@ dscm_config_parse(char *configfile)
         subalign = (enum align)scm_to_int(eval);
 
         titleblocks = dscm_iterate_list(dscm_alist_get(config, "title-blocks"),
-                sizeof(Block), &dscm_parse_block);
+                sizeof(Block), &dscm_parse_block, WINDOW_TITLE);
         subblocks = dscm_iterate_list(dscm_alist_get(config, "sub-blocks"),
-                sizeof(Block), &dscm_parse_block);
+                sizeof(Block), &dscm_parse_block, WINDOW_SUB);
 }
 
 static inline void
