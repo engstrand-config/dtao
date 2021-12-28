@@ -12,6 +12,8 @@ static int usewmcolorscheme             = 0;
 static int borderpx                     = 0;
 static char *fontstr                    = "";
 static int updateinterval               = 1;
+static char *delimiter                  = NULL;
+static uint32_t spacing                 = 5;
 
 /* positioning */
 static enum align titlealign = ALIGN_L, subalign = ALIGN_R;
@@ -80,6 +82,8 @@ dscm_config_parse(char *configfile)
         isbottom = dscm_alist_get_int(config, "bottom");
         adjustwidth = dscm_alist_get_int(config, "adjust-width");
         usewmcolorscheme = dscm_alist_get_int(config, "use-dwl-guile-colorscheme");
+        delimiter = dscm_alist_get_string(config, "delimiter");
+        spacing = dscm_alist_get_int(config, "block-spacing");
 
         if (isbottom)
                 anchor ^= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |

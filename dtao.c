@@ -281,11 +281,14 @@ drawtext(char *text, Monitor *m, Block *blocks, pixman_image_t *layer,
         yoffset = isbottom ? borderpx : 0;
         heightoffset = isbottom ? 0 : borderpx;
         ypos = (height + heightoffset + font->ascent - font->descent) / 2;
+        int drawdelim = 0;
 
 	for (p = start = text; *p; p++) {
                 pos = p - start;
+                if (drawdelim)
+                        p = delimiter;
                 /* Update the blocks clickable area, if any. */
-                if (b->click) {
+                if (b->click && !drawdelim) {
                         /* TODO: Must account for heightoffset */
                         if (pos == 0)
                                 b->ca.fromx = xpos;
@@ -293,7 +296,7 @@ drawtext(char *text, Monitor *m, Block *blocks, pixman_image_t *layer,
                                 b->ca.tox = xpos;
                 }
 		/* Check for inline ^ commands */
-		if (state == UTF8_ACCEPT && *p == '^') {
+		if (!drawdelim && state == UTF8_ACCEPT && *p == '^') {
 			p++;
 			if (*p != '^') {
 				p = handle_cmd(p, m, &textbgcolor, &textfgcolor, &xpos, &ypos);
@@ -353,11 +356,24 @@ drawtext(char *text, Monitor *m, Block *blocks, pixman_image_t *layer,
 		xpos += glyph->advance.x;
 		ypos += glyph->advance.y;
 
+                if (drawdelim) {
+                        drawdelim = 0;
+                        p = start - 1;
+                        xpos += spacing;
+                }
+
                 /* Keep track of the block currently being parsed.
                  * This is needed to add appropriate clickable areas. */
-                if (pos == b->length) {
+                if (pos == b->length - 1) {
                         b++;
-                        start = p - 1;
+                        start = p + 1;
+                        if (b->render != NULL) {
+                                xpos += spacing;
+                                if (delimiter)
+                                        drawdelim = 1;
+                                else
+                                        xpos += spacing;
+                        }
                 }
 	}
 	pixman_image_unref(fgfill);
@@ -584,6 +600,7 @@ layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface)
 {
 	zwlr_layer_surface_v1_destroy(surface);
 	wl_surface_destroy(((Monitor*)data)->wl_surface);
+        /* TODO: Will this cause dtao to quit if disconnecting a monitor? */
 	running = false;
 }
 
