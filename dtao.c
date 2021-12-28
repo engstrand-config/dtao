@@ -812,13 +812,14 @@ updateblocks(unsigned int iteration, char *dest, Block *blocks)
         int dirty = 0;
         char *cursor = dest, *end = &dest[MAX_LINE_LEN - 1];
 
-        // TODO: Support delimiters
         // TODO: Save length of previous block output and only
         // re-render following blocks if the length has changed
         // (assuming no following block has changed).
         for (b = blocks; b->render; b++) {
-                if (iteration > 0 && (b->interval <= 0 || iteration % b->interval != 0))
+                if (iteration > 0 && (b->interval <= 0 || iteration % b->interval != 0)) {
+                        cursor += b->length;
                         continue;
+                }
                 if (updateblock(b) != 0)
                         dirty = 1;
                 memcpy(cursor, b->text, MIN(b->length, end - cursor));
