@@ -444,7 +444,6 @@ draw_frame(Monitor *m, enum align a)
         if (a & ALIGN_C)
                 drawtext(m, ALIGN_C);
         if (a & ALIGN_R) {
-                printf("ASDADS\n");
                 drawtext(m, ALIGN_R);
         }
         /* How should we handle overflows? Configurable render order? */
