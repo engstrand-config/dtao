@@ -101,8 +101,6 @@ static void destroymon(Monitor *m);
 static struct wl_buffer *draw_frame(Monitor *m, enum align a);
 static void drawbar(Monitor *m, enum align a);
 static void drawbars(enum align a);
-static void drawbg(Monitor *m, pixman_image_t *dest, pixman_color_t *bg,
-        uint32_t x1, uint32_t x2, uint32_t y1, uint32_t y2);
 static void drawtext(Monitor *m, enum align align);
 static void event_loop(void);
 static char *handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg,
@@ -256,21 +254,6 @@ destroymon(Monitor *m)
 }
 
 void
-drawbg(Monitor *m, pixman_image_t *dest, pixman_color_t *bg,
-       uint32_t x1, uint32_t x2, uint32_t y1, uint32_t y2)
-{
-        if (x1 >= m->width || bg->alpha == 0x0000)
-                return;
-        pixman_image_fill_boxes(PIXMAN_OP_OVER, dest, bg, 1,
-                &(pixman_box32_t){
-                        .x1 = x1,
-                        .x2 = MIN(x2, m->width),
-                        .y1 = y1,
-                        .y2 = y2,
-                });
-}
-
-void
 drawtext(Monitor *m, enum align align)
 {
         Block *b, *blocks;
@@ -297,15 +280,20 @@ drawtext(Monitor *m, enum align align)
         if (!blocks)
                 return;
 
+        /* Create new buffer for blocks */
+        pixman_image_unref(dest);
+        dest = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+                        m->width, height, NULL, m->stride);
+
         /* Colors (premultiplied!) */
         textbgcolor = bgcolor;
         textfgcolor = fgcolor;
 
         fgfill = pixman_image_create_solid_fill(&textfgcolor);
         bglayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-                        m->width, height, NULL, m->width * 4);
+                        m->width, height, NULL, m->stride);
         fglayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-                        m->width, height, NULL, m->width * 4);
+                        m->width, height, NULL, m->stride);
 
         yoffset = isbottom ? borderpx : 0;
         heightoffset = isbottom ? 0 : borderpx;
@@ -371,30 +359,30 @@ drawtext(Monitor *m, enum align align)
                                         PIXMAN_OP_OVER, fgfill, glyph->pix, fglayer, 0, 0, 0, 0,
                                         xpos + glyph->x, ypos - glyph->y, glyph->width, glyph->height);
                         }
-                        drawbg(m, bglayer, &textbgcolor, xpos, xpos + glyph->advance.x, yoffset, height - yoffset);
+                        if (textbgcolor.alpha != 0x0000)
+                                pixman_image_fill_boxes(PIXMAN_OP_OVER, bglayer,
+                                        &textbgcolor, 1, &(pixman_box32_t){
+                                                .x1 = xpos,
+                                                .x2 = MIN(xpos + glyph->advance.x, m->width),
+                                                .y1 = yoffset,
+                                                .y2 = height - heightoffset,
+                                        });
                         xpos += glyph->advance.x;
                         ypos += glyph->advance.y;
                 }
-                space = 0;
                 if (drawdelim) {
                         drawdelim = 0;
-                        space += spacing;
+                        xpos += spacing;
                 } else {
                         b->ca.tox = xpos;
                         b++;
                         if (b->render != NULL) {
-                                space += spacing;
+                                xpos += spacing;
                                 if (delimiter)
                                         drawdelim = 1;
                                 else
-                                        space += spacing;
+                                        xpos += spacing;
                         }
-                }
-                /* Draw spacing between blocks. Since the underlying graphics buffer is being reused,
-                 * the spacing must overwrite any old data at the corresponding xpos. */
-                if (space > 0) {
-                        drawbg(m, bglayer, &textbgcolor, xpos, xpos + space, yoffset, height - yoffset);
-                        xpos += space;
                 }
         }
         pixman_image_unref(fgfill);
