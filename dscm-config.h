@@ -20,7 +20,7 @@ static uint32_t spacing                 = 10;
 static int layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;;
 static int anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
                     ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
-		    ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
+                    ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
 
 /* blocks */
 static Block *leftblocks                = NULL;
@@ -29,24 +29,24 @@ static Block *rightblocks               = NULL;
 
 /* default colors */
 static pixman_color_t
-	bordercolor = {
-		.red = 0xffff,
-		.green = 0x0000,
-		.blue = 0x0000,
-		.alpha = 0xffff,
-	},
-	bgcolor = {
-		.red = 0x1111,
-		.green = 0x1111,
-		.blue = 0x1111,
-		.alpha = 0x0000,
-	},
-	fgcolor = {
-		.red = 0xb3b3,
-		.green = 0xb3b3,
-		.blue = 0xb3b3,
-		.alpha = 0xffff,
-	};
+        bordercolor = {
+                .red = 0xffff,
+                .green = 0x0000,
+                .blue = 0x0000,
+                .alpha = 0xffff,
+        },
+        bgcolor = {
+                .red = 0x1111,
+                .green = 0x1111,
+                .blue = 0x1111,
+                .alpha = 0x0000,
+        },
+        fgcolor = {
+                .red = 0xb3b3,
+                .green = 0xb3b3,
+                .blue = 0xb3b3,
+                .alpha = 0xffff,
+        };
 
 static inline void
 dscm_parse_block(unsigned int index, SCM block, void *data, enum align a)
@@ -58,10 +58,12 @@ dscm_parse_block(unsigned int index, SCM block, void *data, enum align a)
                 .align = a,
                 .signal = dscm_alist_get_int(block, "signal"),
                 .interval = dscm_alist_get_int(block, "interval"),
-                .click = click,
                 .render = dscm_alist_get_proc_pointer(block, "render"),
+                .events = dscm_alist_get_int(block, "events"),
+                .click = click,
         };
-        /* TODO: Allow multiple click listeners, one for each type of button */
+
+        /* TODO: Send the mouse button of the click event to the click handler */
         if (click)
                 wl_list_insert(&cas, &blocks[index].clink);
 }
