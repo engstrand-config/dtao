@@ -90,9 +90,6 @@ static struct wl_list cas;
 
 static Monitor *selmon;
 static char *namespace = "dtao";
-static char leftstatus[MAX_LINE_LEN];
-static char centerstatus[MAX_LINE_LEN];
-static char rightstatus[MAX_LINE_LEN];
 static bool running = true;
 static uint32_t TAGMASK = 0;
 static uint32_t savedx = 0, mousex = 0, mousey = 0;
@@ -133,7 +130,7 @@ static void seat_handle_capabilities(void *data, struct wl_seat *seat,
 	enum wl_seat_capability caps);
 static void setupmon(Monitor *m);
 static int updateblock(Block *b);
-static int updateblocks(unsigned int iteration, char *dest, Block *blocks);
+static int updateblocks(unsigned int iteration, Block *blocks);
 static void updatestatus(unsigned int iteration);
 static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 
@@ -257,28 +254,34 @@ destroymon(Monitor *m)
 void
 drawtext(Monitor *m, enum align align)
 {
-        Block *b;
+        Block *b, *blocks;
         int drawdelim = 0;
-        char *p, *start, *text;
+        char *p, *start, *end;
         pixman_color_t textbgcolor, textfgcolor;
         pixman_image_t *fgfill, *bglayer, *fglayer, *dest;
         uint32_t yoffset, heightoffset, codepoint, ypos, xdraw,
-                pos = 0, xpos = 0, lastcp = 0, state = UTF8_ACCEPT;
+                xpos = 0, lastcp = 0, state = UTF8_ACCEPT;
 
         /* Render the appropriate blocks based on alignment. */
         if (align == ALIGN_L) {
                 dest = m->leftlayer;
-                b = leftblocks;
-                text = leftstatus;
+                blocks = leftblocks;
         } else if (align == ALIGN_C) {
                 dest = m->centerlayer;
-                b = centerblocks;
-                text = centerstatus;
+                blocks = centerblocks;
         } else if (align == ALIGN_R) {
                 dest = m->rightlayer;
-                b = rightblocks;
-                text = rightstatus;
+                blocks = rightblocks;
         }
+
+        /* Create new buffer */
+        pixman_image_unref(dest);
+        dest = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+                        m->width, height, NULL, m->width * 4);
+
+        /* Can this ever be NULL? */
+        if (!blocks)
+                return;
 
 	/* Colors (premultiplied!) */
 	textbgcolor = bgcolor;
@@ -294,90 +297,83 @@ drawtext(Monitor *m, enum align align)
         heightoffset = isbottom ? 0 : borderpx;
         ypos = (height + heightoffset + font->ascent - font->descent) / 2;
 
-	for (p = start = text; *p; p++) {
-                pos = p - start;
-                if (drawdelim)
-                        p = delimiter;
-                /* Update the blocks clickable area, if any. */
-                if (b->click && !drawdelim) {
-                        /* TODO: Must account for heightoffset */
-                        if (pos == 0)
-                                b->ca.fromx = xpos;
-                        if (pos == b->length)
-                                b->ca.tox = xpos;
+        /* Stop rendering if exceeding the maximum line length */
+        for (b = blocks; b->render;) {
+                if (drawdelim) {
+                        start = delimiter;
+                        end = delimiterend;
+                } else {
+                        b->ca.fromx = xpos;
+                        start = b->text;
+                        end = start + b->length;
                 }
-		/* Check for inline ^ commands */
-		if (!drawdelim && state == UTF8_ACCEPT && *p == '^') {
-			p++;
-			if (*p != '^') {
-				p = handle_cmd(p, m, &textbgcolor, &textfgcolor, &xpos, &ypos);
-				pixman_image_unref(fgfill);
-				fgfill = pixman_image_create_solid_fill(&textfgcolor);
-				continue;
-			}
-		}
+                for (p = start; p != end; p++) {
+                        /* Check for inline ^ commands */
+                        if (!drawdelim && state == UTF8_ACCEPT && *p == '^') {
+                                p++;
+                                if (*p != '^') {
+                                        p = handle_cmd(p, m, &textbgcolor, &textfgcolor, &xpos, &ypos);
+                                        pixman_image_unref(fgfill);
+                                        fgfill = pixman_image_create_solid_fill(&textfgcolor);
+                                        continue;
+                                }
+                        }
+                        /* Returns nonzero if more bytes are needed */
+                        if (utf8decode(&state, &codepoint, *p))
+                                continue;
 
-		/* Returns nonzero if more bytes are needed */
-		if (utf8decode(&state, &codepoint, *p))
-			continue;
+                        /* Turn off subpixel rendering, which complicates things when
+                        * mixed with alpha channels */
+                        const struct fcft_glyph *glyph = fcft_glyph_rasterize(font, codepoint,
+                                        FCFT_SUBPIXEL_NONE);
+                        if (!glyph)
+                                continue;
 
-		/* Turn off subpixel rendering, which complicates things when
-		 * mixed with alpha channels */
-		const struct fcft_glyph *glyph = fcft_glyph_rasterize(font, codepoint,
-				FCFT_SUBPIXEL_NONE);
-		if (!glyph)
-			continue;
+                        /* Adjust x position based on kerning with previous glyph */
+                        long x_kern = 0;
+                        if (lastcp)
+                                fcft_kerning(font, lastcp, codepoint, &x_kern, NULL);
+                        xpos += x_kern;
+                        lastcp = codepoint;
 
-		/* Adjust x position based on kerning with previous glyph */
-		long x_kern = 0;
-		if (lastcp)
-			fcft_kerning(font, lastcp, codepoint, &x_kern, NULL);
-		xpos += x_kern;
-		lastcp = codepoint;
+                        /* Detect and handle pre-rendered glyphs (e.g. emoji) */
+                        if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
+                                /* Only the alpha channel of the mask is used, so we can
+                                * use fgfill here to blend prerendered glyphs with the
+                                * same opacity */
+                                pixman_image_composite32(
+                                        PIXMAN_OP_OVER, glyph->pix, fgfill, fglayer, 0, 0, 0, 0,
+                                        xpos + glyph->x, ypos - glyph->y, glyph->width, glyph->height);
+                        } else {
+                                /* Applying the foreground color here would mess up
+                                * component alphas for subpixel-rendered text, so we
+                                * apply it when blending. */
+                                pixman_image_composite32(
+                                        PIXMAN_OP_OVER, fgfill, glyph->pix, fglayer, 0, 0, 0, 0,
+                                        xpos + glyph->x, ypos - glyph->y, glyph->width, glyph->height);
+                        }
 
-		/* Detect and handle pre-rendered glyphs (e.g. emoji) */
-		if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
-			/* Only the alpha channel of the mask is used, so we can
-			 * use fgfill here to blend prerendered glyphs with the
-			 * same opacity */
-			pixman_image_composite32(
-				PIXMAN_OP_OVER, glyph->pix, fgfill, fglayer, 0, 0, 0, 0,
-				xpos + glyph->x, ypos - glyph->y, glyph->width, glyph->height);
-		} else {
-			/* Applying the foreground color here would mess up
-			 * component alphas for subpixel-rendered text, so we
-			 * apply it when blending. */
-			pixman_image_composite32(
-				PIXMAN_OP_OVER, fgfill, glyph->pix, fglayer, 0, 0, 0, 0,
-				xpos + glyph->x, ypos - glyph->y, glyph->width, glyph->height);
-		}
+                        if (xpos < m->width) {
+                                if (textbgcolor.alpha != 0x0000)
+                                        pixman_image_fill_boxes(PIXMAN_OP_OVER, bglayer,
+                                                        &textbgcolor, 1, &(pixman_box32_t){
+                                                                .x1 = xpos,
+                                                                .x2 = MIN(xpos + glyph->advance.x, m->width),
+                                                                .y1 = yoffset,
+                                                                .y2 = height - heightoffset,
+                                                        });
+                        }
 
-		if (xpos < m->width) {
-                        if (textbgcolor.alpha != 0x0000)
-                                pixman_image_fill_boxes(PIXMAN_OP_OVER, bglayer,
-                                                &textbgcolor, 1, &(pixman_box32_t){
-                                                        .x1 = xpos,
-                                                        .x2 = MIN(xpos + glyph->advance.x, m->width),
-                                                        .y1 = yoffset,
-                                                        .y2 = height - heightoffset,
-                                                });
-		}
-
-		/* increment pen position */
-		xpos += glyph->advance.x;
-		ypos += glyph->advance.y;
-
+                        /* increment pen position */
+                        xpos += glyph->advance.x;
+                        ypos += glyph->advance.y;
+                }
                 if (drawdelim) {
                         drawdelim = 0;
-                        p = start - 1;
                         xpos += spacing;
-                }
-
-                /* Keep track of the block currently being parsed.
-                 * This is needed to add appropriate clickable areas. */
-                if (pos == b->length - 1) {
+                } else {
+                        b->ca.tox = xpos;
                         b++;
-                        start = p + 1;
                         if (b->render != NULL) {
                                 xpos += spacing;
                                 if (delimiter)
@@ -386,7 +382,7 @@ drawtext(Monitor *m, enum align align)
                                         xpos += spacing;
                         }
                 }
-	}
+        }
 	pixman_image_unref(fgfill);
 
 	if (state != UTF8_ACCEPT)
@@ -821,28 +817,14 @@ updateblock(Block *b)
 }
 
 int
-updateblocks(unsigned int iteration, char *dest, Block *blocks)
+updateblocks(unsigned int iteration, Block *blocks)
 {
         Block *b;
         int dirty = 0;
-        char *cursor = dest, *end = &dest[MAX_LINE_LEN - 1];
-
-        // TODO: Save length of previous block output and only
-        // re-render following blocks if the length has changed
-        // (assuming no following block has changed).
-        for (b = blocks; b->render; b++) {
-                if (iteration > 0 && (b->interval <= 0 || iteration % b->interval != 0)) {
-                        cursor += b->length;
-                        continue;
-                }
-                if (updateblock(b) != 0)
-                        dirty = 1;
-                memcpy(cursor, b->text, MIN(b->length, end - cursor));
-                if ((cursor += b->length) >= end)
-                        break;
-        }
-        if (dirty)
-                dest[MAX(MAX_LINE_LEN - 1, (end - cursor))] = '\0';
+        for (b = blocks; b->render; b++)
+                if (iteration == 0 || (b->interval > 0 && iteration % b->interval == 0))
+                        if (updateblock(b) != 0)
+                                dirty = 1;
         return dirty;
 }
 
@@ -850,11 +832,11 @@ void
 updatestatus(unsigned int i)
 {
         enum align a = ALIGN_UNSET;
-        if (updateblocks(i, leftstatus, leftblocks) || i == 0)
+        if (updateblocks(i, leftblocks) || i == 0)
                 a |= ALIGN_L;
-        if (updateblocks(i, centerstatus, centerblocks) || i == 0)
+        if (updateblocks(i, centerblocks) || i == 0)
                 a |= ALIGN_C;
-        if (updateblocks(i, rightstatus, rightblocks) || i == 0)
+        if (updateblocks(i, rightblocks) || i == 0)
                 a |= ALIGN_R;
         if (a != ALIGN_UNSET)
                 drawbars(a);

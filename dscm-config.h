@@ -13,6 +13,7 @@ static int borderpx                     = 0;
 static char *fontstr                    = "";
 static int updateinterval               = 1;
 static char *delimiter                  = NULL;
+static char *delimiterend               = NULL;
 static uint32_t spacing                 = 10;
 
 /* positioning */
@@ -85,6 +86,8 @@ dscm_config_parse(char *configfile)
         delimiter = dscm_alist_get_string(config, "delimiter");
         spacing = dscm_alist_get_int(config, "block-spacing");
 
+        if (delimiter)
+                delimiterend = delimiter + strlen(delimiter);
         if (isbottom)
                 anchor ^= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
                           ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
