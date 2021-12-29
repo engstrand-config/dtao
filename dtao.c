@@ -737,11 +737,10 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
                         xoffset = sel->centerxdraw;
                 else if (b->align == ALIGN_R)
                         xoffset = sel->rightxdraw;
-                if (b->ca.button == button - BTN_MOUSE &&
-                            (b->ca.fromx + xoffset) <= mousex &&
+                if ((b->ca.fromx + xoffset) <= mousex &&
                             (b->ca.tox + xoffset) >= mousex &&
                             b->ca.fromy <= mousey && mousey <= b->ca.toy) {
-                        dscm_safe_call(b->click, NULL);
+                        dscm_safe_call_click(b->click, button - BTN_MOUSE);
                         break;
                 }
         }
@@ -810,9 +809,9 @@ setupmon(Monitor *m)
 int
 updateblock(Block *b)
 {
-        SCM ret = dscm_safe_call(b->render, selmon);
+        SCM ret = dscm_safe_call_render(b->render, selmon);
         if (!scm_is_string(ret))
-                return 1;
+                return 0;
         memcpy(b->prevtext, b->text, b->length);
         b->length = MIN(MAX_BLOCK_LEN, scm_to_locale_stringbuf(ret, b->text, MAX_BLOCK_LEN));
         return memcmp(b->prevtext, b->text, b->length);

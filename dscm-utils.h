@@ -2,7 +2,7 @@
 
 typedef struct {
         SCM proc;
-        void *args;
+        union { void* monitor; uint32_t button; };
 } dscm_call_data_t;
 
 static inline SCM
@@ -80,20 +80,36 @@ dscm_alist_get_proc_pointer(SCM alist, const char *key)
         return proc;
 }
 
-static inline void*
-dscm_call_block_callback(void *data)
+static inline void *
+dscm_call_render_callback(void *data)
 {
         dscm_call_data_t *wrapper = (dscm_call_data_t*)data;
-        SCM state = scm_from_pointer(wrapper->args, NULL);
-        return scm_call_1(wrapper->proc, state);
+        SCM monitor = scm_from_pointer(wrapper->monitor, NULL);
+        return scm_call_1(wrapper->proc, monitor);
 }
 
-// TODO: Replace void *data with the block state type
+static inline void *
+dscm_call_click_callback(void *data)
+{
+        dscm_call_data_t *wrapper = (dscm_call_data_t*)data;
+        SCM button = scm_from_int(wrapper->button);
+        return scm_call_1(wrapper->proc, button);
+}
+
 static inline SCM
-dscm_safe_call(scm_t_bits *ptr, void *data)
+dscm_safe_call_render(scm_t_bits *ptr, void *monitor)
 {
         if (ptr == NULL)
                 BARF("dscm: could not call proc that is NULL");
-        dscm_call_data_t wrapper = {.proc = SCM_PACK_POINTER(ptr), .args = data};
-        return scm_c_with_continuation_barrier(&dscm_call_block_callback, &wrapper);
+        dscm_call_data_t wrapper = {.proc = SCM_PACK_POINTER(ptr), .monitor = monitor};
+        return scm_c_with_continuation_barrier(&dscm_call_render_callback, &wrapper);
+}
+
+static inline SCM
+dscm_safe_call_click(scm_t_bits *ptr, uint32_t button)
+{
+        if (ptr == NULL)
+                BARF("dscm: could not call proc that is NULL");
+        dscm_call_data_t wrapper = {.proc = SCM_PACK_POINTER(ptr), .button = button};
+        return scm_c_with_continuation_barrier(&dscm_call_click_callback, &wrapper);
 }
