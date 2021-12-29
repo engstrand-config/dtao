@@ -272,8 +272,8 @@ void
 drawtext(Monitor *m, enum align align)
 {
         Block *b, *blocks;
-        int drawdelim = 0;
         char *p, *start, *end;
+        int drawdelim = 0, drawstop = 0;
         pixman_color_t textbgcolor, textfgcolor;
         pixman_image_t *fgfill, *bglayer, *fglayer, *dest;
         uint32_t yoffset, heightoffset, codepoint, ypos, xdraw, space,
@@ -309,8 +309,7 @@ drawtext(Monitor *m, enum align align)
         heightoffset = isbottom ? 0 : borderpx;
         ypos = (height + heightoffset + font->ascent - font->descent) / 2;
 
-        /* TODO: Stop rendering if exceeding the maximum line length */
-        for (b = blocks; b->render;) {
+        for (b = blocks; b->render && !drawstop;) {
                 if (drawdelim) {
                         start = delimiter;
                         end = delimiterend;
@@ -320,6 +319,12 @@ drawtext(Monitor *m, enum align align)
                         end = start + b->length;
                 }
                 for (p = start; p != end; p++) {
+                        /* Stop drawing when exceeding the monitor width. */
+                        if (xpos >= m->width) {
+                                drawstop = 1;
+                                break;
+                        }
+
                         /* Check for inline ^ commands */
                         if (!drawdelim && state == UTF8_ACCEPT && *p == '^') {
                                 p++;
