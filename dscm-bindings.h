@@ -3,6 +3,7 @@
 static inline void
 dscm_register()
 {
+        /* TODO: Add bindings for clicking tags, etc. */
         /* Layering */
         scm_c_define("LAYER-OVERLAY",
                 scm_from_int(ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY));
@@ -12,9 +13,4 @@ dscm_register()
                 scm_from_int(ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM));
         scm_c_define("LAYER-TOP",
                 scm_from_int(ZWLR_LAYER_SHELL_V1_LAYER_TOP));
-
-        /* Alignment */
-        scm_c_define("ALIGN-LEFT", scm_from_int(ALIGN_L));
-        scm_c_define("ALIGN-CENTER", scm_from_int(ALIGN_C));
-        scm_c_define("ALIGN-RIGHT", scm_from_int(ALIGN_R));
 }

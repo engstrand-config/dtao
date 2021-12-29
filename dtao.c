@@ -28,7 +28,6 @@
 #define EBARF(fmt, ...)		BARF(fmt ": %s", ##__VA_ARGS__, strerror(errno))
 #define MIN(a, b)               ((a) < (b) ? (a) : (b))
 #define MAX(a, b)               ((a) > (b) ? (a) : (b))
-#define FLAG_SET(a, b)          (a & (1 << (b - 1)))
 
 #define PROGRAM "dtao"
 #define VERSION "0.1"
@@ -40,13 +39,10 @@
 
 /* Includes the newline character */
 #define MAX_LINE_LEN 8192
-#define MAX_BLOCK_LEN 64
-#define MAX_CLICKABLE_AREAS 64
-#define MAX_CLICKABLE_AREA_CMD_LEN 128
+#define MAX_BLOCK_LEN 128
 
 /* enums */
-enum window { WINDOW_UNSET, WINDOW_TITLE, WINDOW_SUB };
-enum align { ALIGN_UNSET, ALIGN_C, ALIGN_L, ALIGN_R };
+enum align { ALIGN_UNSET = 0, ALIGN_L = 1, ALIGN_C = 2, ALIGN_R = 4 };
 
 typedef struct {
         uint32_t fromx;
@@ -63,14 +59,14 @@ typedef struct {
         struct wl_buffer *wl_buffer;
         struct zwlr_layer_surface_v1 *layer_surface;
         struct dscm_monitor_v1 *dscm;
-        pixman_image_t *swlayer, *twlayer;
+        pixman_image_t *leftlayer, *centerlayer, *rightlayer;
         uint32_t name, width, stride, bufsize, layout, activetags,
-                twxdraw, swxdraw;
+                centerxdraw, rightxdraw;
         char *title;
 } Monitor;
 
 typedef struct {
-        enum window w;
+        enum align align;
         struct wl_list clink;
         scm_t_bits *render;
         scm_t_bits *click;
@@ -94,8 +90,9 @@ static struct wl_list cas;
 
 static Monitor *selmon;
 static char *namespace = "dtao";
-static char titlestatus[MAX_LINE_LEN];
-static char substatus[MAX_LINE_LEN];
+static char leftstatus[MAX_LINE_LEN];
+static char centerstatus[MAX_LINE_LEN];
+static char rightstatus[MAX_LINE_LEN];
 static bool running = true;
 static uint32_t TAGMASK = 0;
 static uint32_t savedx = 0, mousex = 0, mousey = 0;
@@ -104,11 +101,10 @@ static uint32_t savedx = 0, mousex = 0, mousey = 0;
 static int allocate_shm_file(size_t size);
 static void createmon(struct wl_output *output, uint32_t name);
 static void destroymon(Monitor *m);
-static struct wl_buffer *draw_frame(Monitor *m, enum window w);
-static void drawbar(Monitor *m, enum window w);
-static void drawbars(enum window w);
-static void drawtext(char *text, Monitor *m, Block *blocks, pixman_image_t *bar,
-        uint32_t *xdraw, enum align align);
+static struct wl_buffer *draw_frame(Monitor *m, enum align a);
+static void drawbar(Monitor *m, enum align a);
+static void drawbars(enum align a);
+static void drawtext(Monitor *m, enum align align);
 static void event_loop(void);
 static char *handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg,
         pixman_color_t *fg, uint32_t *xpos, uint32_t *ypos);
@@ -228,9 +224,9 @@ createmon(struct wl_output *output, uint32_t name)
 }
 
 void
-drawbar(Monitor *m, enum window w)
+drawbar(Monitor *m, enum align a)
 {
-	m->wl_buffer = draw_frame(m, w);
+	m->wl_buffer = draw_frame(m, a);
 	if (!m->wl_buffer)
 		return;
 	wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
@@ -239,18 +235,19 @@ drawbar(Monitor *m, enum window w)
 }
 
 void
-drawbars(enum window w)
+drawbars(enum align a)
 {
         Monitor *m;
         wl_list_for_each(m, &monitors, link)
-                drawbar(m, w);
+                drawbar(m, a);
 }
 
 void
 destroymon(Monitor *m)
 {
-        pixman_image_unref(m->twlayer);
-        pixman_image_unref(m->swlayer);
+        pixman_image_unref(m->leftlayer);
+        pixman_image_unref(m->centerlayer);
+        pixman_image_unref(m->rightlayer);
         dscm_monitor_v1_destroy(m->dscm);
         zwlr_layer_surface_v1_destroy(m->layer_surface);
         wl_surface_destroy(m->wl_surface);
@@ -258,15 +255,30 @@ destroymon(Monitor *m)
 }
 
 void
-drawtext(char *text, Monitor *m, Block *blocks, pixman_image_t *layer,
-        uint32_t *xdraw, enum align align)
+drawtext(Monitor *m, enum align align)
 {
-        char *p, *start;
-        Block *b = blocks;
+        Block *b;
+        int drawdelim = 0;
+        char *p, *start, *text;
         pixman_color_t textbgcolor, textfgcolor;
-        pixman_image_t *fgfill, *bglayer, *fglayer;
-        uint32_t yoffset, heightoffset, codepoint, ypos,
+        pixman_image_t *fgfill, *bglayer, *fglayer, *dest;
+        uint32_t yoffset, heightoffset, codepoint, ypos, xdraw,
                 pos = 0, xpos = 0, lastcp = 0, state = UTF8_ACCEPT;
+
+        /* Render the appropriate blocks based on alignment. */
+        if (align == ALIGN_L) {
+                dest = m->leftlayer;
+                b = leftblocks;
+                text = leftstatus;
+        } else if (align == ALIGN_C) {
+                dest = m->centerlayer;
+                b = centerblocks;
+                text = centerstatus;
+        } else if (align == ALIGN_R) {
+                dest = m->rightlayer;
+                b = rightblocks;
+                text = rightstatus;
+        }
 
 	/* Colors (premultiplied!) */
 	textbgcolor = bgcolor;
@@ -281,7 +293,6 @@ drawtext(char *text, Monitor *m, Block *blocks, pixman_image_t *layer,
         yoffset = isbottom ? borderpx : 0;
         heightoffset = isbottom ? 0 : borderpx;
         ypos = (height + heightoffset + font->ascent - font->descent) / 2;
-        int drawdelim = 0;
 
 	for (p = start = text; *p; p++) {
                 pos = p - start;
@@ -381,30 +392,24 @@ drawtext(char *text, Monitor *m, Block *blocks, pixman_image_t *layer,
 	if (state != UTF8_ACCEPT)
 		fprintf(stderr, "malformed UTF-8 sequence\n");
 
-        switch (align) {
-                case ALIGN_C:
-                        *xdraw = (m->width - xpos) / 2;
-                        break;
-                case ALIGN_R:
-                        *xdraw = m->width - xpos;
-                        break;
-                case ALIGN_L:
-                default:
-                        *xdraw = 0;
-                        break;
-        }
+        if (align == ALIGN_L)
+                xdraw = 0;
+        else if (align == ALIGN_C)
+                m->centerxdraw = xdraw = (m->width - xpos) / 2;
+        else if (align == ALIGN_R)
+                m->rightxdraw = xdraw = m->width - xpos;
 
-	pixman_image_composite32(PIXMAN_OP_OVER, bglayer, NULL, layer, 0, 0, 0, 0,
-			*xdraw, 0, xpos, height);
-	pixman_image_composite32(PIXMAN_OP_OVER, fglayer, NULL, layer, 0, 0, 0, 0,
-			*xdraw, 0, xpos, height);
+	pixman_image_composite32(PIXMAN_OP_OVER, bglayer, NULL, dest, 0, 0, 0, 0,
+			xdraw, 0, xpos, height);
+	pixman_image_composite32(PIXMAN_OP_OVER, fglayer, NULL, dest, 0, 0, 0, 0,
+			xdraw, 0, xpos, height);
 
 	pixman_image_unref(bglayer);
 	pixman_image_unref(fglayer);
 }
 
 struct wl_buffer *
-draw_frame(Monitor *m, enum window w)
+draw_frame(Monitor *m, enum align a)
 {
 	/* Allocate buffer to be attached to the surface */
 	int fd = allocate_shm_file(m->bufsize);
@@ -430,20 +435,24 @@ draw_frame(Monitor *m, enum window w)
 	pixman_image_t *bar = pixman_image_create_bits(PIXMAN_a8r8g8b8,
 			m->width, height, data, m->stride);
 
+        /* How should this work when there is three different "bars"? */
         if (!adjustwidth)
                 pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
                         &(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
-        /* TODO: The current caching method is not working. */
-        /* if (FLAG_SET(w, WINDOW_TITLE)) { */
-        /*         drawtext(titlestatus, m, m->twlayer, titlealign); */
-        /* } else if (FLAG_SET(w, WINDOW_SUB)) { */
-        /*         drawtext(substatus, m, m->swlayer, subalign); */
-        /* } */
-        drawtext(titlestatus, m, titleblocks, m->twlayer, &m->twxdraw, titlealign);
-        drawtext(substatus, m, subblocks, m->swlayer, &m->swxdraw, subalign);
-	pixman_image_composite32(PIXMAN_OP_OVER, m->swlayer, NULL, bar, 0, 0, 0, 0,
+        if (a & ALIGN_L)
+                drawtext(m, ALIGN_L);
+        if (a & ALIGN_C)
+                drawtext(m, ALIGN_C);
+        if (a & ALIGN_R) {
+                printf("ASDADS\n");
+                drawtext(m, ALIGN_R);
+        }
+        /* How should we handle overflows? Configurable render order? */
+	pixman_image_composite32(PIXMAN_OP_OVER, m->leftlayer, NULL, bar, 0, 0, 0, 0,
 			0, 0, m->width, height);
-	pixman_image_composite32(PIXMAN_OP_OVER, m->twlayer, NULL, bar, 0, 0, 0, 0,
+	pixman_image_composite32(PIXMAN_OP_OVER, m->rightlayer, NULL, bar, 0, 0, 0, 0,
+			0, 0, m->width, height);
+	pixman_image_composite32(PIXMAN_OP_OVER, m->centerlayer, NULL, bar, 0, 0, 0, 0,
 			0, 0, m->width, height);
 	pixman_image_unref(bar);
 	munmap(data, m->bufsize);
@@ -584,15 +593,17 @@ layer_surface_configure(void *data,
 	m->width = w;
 	m->stride = m->width * 4;
 	m->bufsize = m->stride * height;
-	m->twlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-			m->width, height, NULL, m->stride);
-	m->swlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-			m->width, height, NULL, m->stride);
+	m->leftlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+                                m->width, height, NULL, m->stride);
+	m->centerlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+			        m->width, height, NULL, m->stride);
+	m->rightlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+                                m->width, height, NULL, m->stride);
 	if (exclusive > 0)
 		exclusive = height;
 	zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, exclusive);
 	zwlr_layer_surface_v1_ack_configure(surface, serial);
-        drawbar(m, WINDOW_TITLE | WINDOW_SUB);
+        drawbar(m, ALIGN_L | ALIGN_C | ALIGN_R);
 }
 
 void
@@ -723,7 +734,12 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
         if (!sel)
                 return;
         wl_list_for_each(b, &cas, clink) {
-                xoffset = b->w & WINDOW_TITLE ? sel->twxdraw : sel->swxdraw;
+                if (b->align == ALIGN_L)
+                        xoffset = 0;
+                else if (b->align == ALIGN_C)
+                        xoffset = sel->centerxdraw;
+                else if (b->align == ALIGN_R)
+                        xoffset = sel->rightxdraw;
                 if (b->ca.button == button - BTN_MOUSE &&
                             (b->ca.fromx + xoffset) <= mousex &&
                             (b->ca.tox + xoffset) >= mousex &&
@@ -834,13 +850,15 @@ updateblocks(unsigned int iteration, char *dest, Block *blocks)
 void
 updatestatus(unsigned int i)
 {
-        enum window w = WINDOW_UNSET;
-        if (updateblocks(i, titlestatus, titleblocks) || i == 0)
-                w |= WINDOW_TITLE;
-        if (updateblocks(i, substatus, subblocks) || i == 0)
-                w |= WINDOW_SUB;
-        if (w != WINDOW_UNSET)
-                drawbars(w);
+        enum align a = ALIGN_UNSET;
+        if (updateblocks(i, leftstatus, leftblocks) || i == 0)
+                a |= ALIGN_L;
+        if (updateblocks(i, centerstatus, centerblocks) || i == 0)
+                a |= ALIGN_C;
+        if (updateblocks(i, rightstatus, rightblocks) || i == 0)
+                a |= ALIGN_R;
+        if (a != ALIGN_UNSET)
+                drawbars(a);
 }
 
 void
@@ -871,7 +889,7 @@ dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
         parse_color(root, &bgcolor);
         parse_color(text, &fgcolor);
         parse_color(border, &bordercolor);
-        drawbars(WINDOW_TITLE | WINDOW_SUB);
+        drawbars(ALIGN_L | ALIGN_C | ALIGN_R);
 }
 
 void

@@ -16,15 +16,15 @@ static char *delimiter                  = NULL;
 static uint32_t spacing                 = 10;
 
 /* positioning */
-static enum align titlealign = ALIGN_L, subalign = ALIGN_R;
 static int layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;;
 static int anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
                     ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT |
 		    ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
 
 /* blocks */
-static Block *titleblocks               = NULL;
-static Block *subblocks                 = NULL;
+static Block *leftblocks                = NULL;
+static Block *centerblocks              = NULL;
+static Block *rightblocks               = NULL;
 
 /* default colors */
 static pixman_color_t
@@ -48,13 +48,13 @@ static pixman_color_t
 	};
 
 static inline void
-dscm_parse_block(unsigned int index, SCM block, void *data, enum window w)
+dscm_parse_block(unsigned int index, SCM block, void *data, enum align a)
 {
         Block *blocks = data;
         scm_t_bits *click = dscm_alist_get_proc_pointer(block, "click");
 
         blocks[index] = (Block){
-                .w = w,
+                .align = a,
                 .signal = dscm_alist_get_int(block, "signal"),
                 .interval = dscm_alist_get_int(block, "interval"),
                 .click = click,
@@ -68,7 +68,7 @@ dscm_parse_block(unsigned int index, SCM block, void *data, enum window w)
 static inline void
 dscm_config_parse(char *configfile)
 {
-        SCM eval, barlayer, twalign, swalign;
+        SCM eval, barlayer;
 
         scm_c_primitive_load(configfile);
         config = dscm_get_variable("config");
@@ -105,24 +105,19 @@ dscm_config_parse(char *configfile)
         eval = scm_primitive_eval(barlayer);
         layer = scm_to_int(eval);
 
-        twalign = dscm_alist_get(config, "title-align");
-        eval = scm_primitive_eval(twalign);
-        titlealign = (enum align)scm_to_int(eval);
-
-        swalign = dscm_alist_get(config, "sub-align");
-        eval = scm_primitive_eval(swalign);
-        subalign = (enum align)scm_to_int(eval);
-
-        titleblocks = dscm_iterate_list(dscm_alist_get(config, "title-blocks"),
-                sizeof(Block), &dscm_parse_block, WINDOW_TITLE);
-        subblocks = dscm_iterate_list(dscm_alist_get(config, "sub-blocks"),
-                sizeof(Block), &dscm_parse_block, WINDOW_SUB);
+        leftblocks = dscm_iterate_list(dscm_alist_get(config, "left-blocks"),
+                sizeof(Block), &dscm_parse_block, ALIGN_L);
+        centerblocks = dscm_iterate_list(dscm_alist_get(config, "center-blocks"),
+                sizeof(Block), &dscm_parse_block, ALIGN_C);
+        rightblocks = dscm_iterate_list(dscm_alist_get(config, "right-blocks"),
+                sizeof(Block), &dscm_parse_block, ALIGN_R);
 }
 
 static inline void
 dscm_config_cleanup()
 {
-        free(titleblocks);
-        free(subblocks);
+        free(leftblocks);
+        free(centerblocks);
+        free(rightblocks);
         free(fontstr);
 }
