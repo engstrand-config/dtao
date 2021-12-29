@@ -810,7 +810,7 @@ int
 updateblock(Block *b)
 {
         SCM ret = dscm_safe_call_render(b->render, selmon);
-        if (!scm_is_string(ret))
+        if (!ret || !scm_is_string(ret))
                 return 0;
         memcpy(b->prevtext, b->text, b->length);
         b->length = MIN(MAX_BLOCK_LEN, scm_to_locale_stringbuf(ret, b->text, MAX_BLOCK_LEN));
