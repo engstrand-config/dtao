@@ -32,8 +32,8 @@
 #define PROGRAM "dtao"
 #define VERSION "0.1"
 #define COPYRIGHT "copyright 2021 Devin J. Pohly and dtao team"
-#define USAGE \
-        "usage: dtao [-v] [-ta <l|c|r>] [-sa <l|c|r>] [-h <pixel>]\n" \
+#define USAGE                                                           \
+        "usage: dtao [-v] [-ta <l|c|r>] [-sa <l|c|r>] [-h <pixel>]\n"   \
         "            [-e <string>] [-fn <font>] [-bg <color>] [-fg <color>]\n" \
         "            [-a] [-z [-z]] [-xs <screen>]"
 
@@ -104,30 +104,32 @@ static void drawbars(enum align a);
 static void drawtext(Monitor *m, enum align align);
 static void event_loop(void);
 static char *handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg,
-        pixman_color_t *fg, uint32_t *xpos, uint32_t *ypos);
+                        pixman_color_t *fg, uint32_t *xpos, uint32_t *ypos);
 static void handle_global(void *data, struct wl_registry *registry,
-        uint32_t name, const char *interface, uint32_t version);
+                          uint32_t name, const char *interface, uint32_t version);
 static void handle_global_remove(void *data, struct wl_registry *registry,
-        uint32_t name);
+                                 uint32_t name);
 static void layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
-        uint32_t serial, uint32_t w, uint32_t h);
+                                    uint32_t serial, uint32_t w, uint32_t h);
 static void layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface);
 static int parse_color(const char *str, pixman_color_t *clr);
 static int parse_movement(char *str, Monitor *m, uint32_t *xpos,
-        uint32_t *ypos, uint32_t xoffset, uint32_t yoffset);
+                          uint32_t *ypos, uint32_t xoffset, uint32_t yoffset);
 static int parse_movement_arg(const char *str, uint32_t max);
 static void pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
-        uint32_t time, uint32_t axis, wl_fixed_t value);
+                                uint32_t time, uint32_t axis, wl_fixed_t value);
 static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
-        uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
+                                  uint32_t serial, uint32_t time,
+                                  uint32_t button, uint32_t state);
 static void pointer_handle_enter(void *data, struct wl_pointer *pointer,
-        uint32_t serial, struct wl_surface *surface, wl_fixed_t sx, wl_fixed_t sy);
+                                 uint32_t serial, struct wl_surface *surface,
+                                 wl_fixed_t sx, wl_fixed_t sy);
 static void pointer_handle_leave(void *data, struct wl_pointer *pointer,
-        uint32_t serial, struct wl_surface *surface);
+                                 uint32_t serial, struct wl_surface *surface);
 static void pointer_handle_motion(void *data, struct wl_pointer *pointer,
-        uint32_t time, wl_fixed_t sx, wl_fixed_t sy);
+                                  uint32_t time, wl_fixed_t sx, wl_fixed_t sy);
 static void seat_handle_capabilities(void *data, struct wl_seat *seat,
-        enum wl_seat_capability caps);
+                                     enum wl_seat_capability caps);
 static void setupmon(Monitor *m);
 static int updateblock(Block *b);
 static int updateblocks(unsigned int iteration, Block *blocks);
@@ -136,18 +138,18 @@ static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 
 /* dscm protocol */
 static void dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
-        const char *border, const char *focus, const char *text);
+                             const char *border, const char *focus, const char *text);
 static void dscm_layout(void *data, struct dscm_v1 *d, const char *name);
 static void dscm_tag(void *data, struct dscm_v1 *d, const char *name);
 static void dscm_monitor_frame(void *data, struct dscm_monitor_v1 *mon);
 static void dscm_monitor_layout(void *data, struct dscm_monitor_v1 *mon,
-        uint32_t index);
+                                uint32_t index);
 static void dscm_monitor_tag(void *data, struct dscm_monitor_v1 *mon,
-        uint32_t index, enum dscm_monitor_v1_tag_state state,
-        uint32_t numclients, uint32_t focusedclient);
+                             uint32_t index, enum dscm_monitor_v1_tag_state state,
+                             uint32_t numclients, uint32_t focusedclient);
 static void dscm_monitor_title(void *data, struct dscm_monitor_v1 *mon, char *title);
 static void dscm_monitor_selected(void *data, struct dscm_monitor_v1 *mon,
-        uint32_t selected);
+                                  uint32_t selected);
 
 /* global listeners */
 static const struct wl_registry_listener registry_listener = {
@@ -283,7 +285,7 @@ drawtext(Monitor *m, enum align align)
         /* Create new buffer for blocks */
         pixman_image_unref(dest);
         dest = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-                        m->width, height, NULL, m->stride);
+                                        m->width, height, NULL, m->stride);
 
         /* Colors (premultiplied!) */
         textbgcolor = bgcolor;
@@ -291,9 +293,9 @@ drawtext(Monitor *m, enum align align)
 
         fgfill = pixman_image_create_solid_fill(&textfgcolor);
         bglayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-                        m->width, height, NULL, m->stride);
+                                           m->width, height, NULL, m->stride);
         fglayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-                        m->width, height, NULL, m->stride);
+                                           m->width, height, NULL, m->stride);
 
         yoffset = isbottom ? borderpx : 0;
         heightoffset = isbottom ? 0 : borderpx;
@@ -319,9 +321,11 @@ drawtext(Monitor *m, enum align align)
                         if (!drawdelim && state == UTF8_ACCEPT && *p == '^') {
                                 p++;
                                 if (*p != '^') {
-                                        p = handle_cmd(p, m, &textbgcolor, &textfgcolor, &xpos, &ypos);
+                                        p = handle_cmd(p, m, &textbgcolor,
+                                                       &textfgcolor, &xpos, &ypos);
                                         pixman_image_unref(fgfill);
-                                        fgfill = pixman_image_create_solid_fill(&textfgcolor);
+                                        fgfill = pixman_image_create_solid_fill(
+                                                &textfgcolor);
                                         continue;
                                 }
                         }
@@ -330,9 +334,9 @@ drawtext(Monitor *m, enum align align)
                                 continue;
 
                         /* Turn off subpixel rendering, which complicates things when
-                        * mixed with alpha channels */
-                        const struct fcft_glyph *glyph = fcft_glyph_rasterize(font, codepoint,
-                                        FCFT_SUBPIXEL_NONE);
+                         * mixed with alpha channels */
+                        const struct fcft_glyph *glyph = fcft_glyph_rasterize(
+                                font, codepoint, FCFT_SUBPIXEL_NONE);
                         if (!glyph)
                                 continue;
 
@@ -346,24 +350,28 @@ drawtext(Monitor *m, enum align align)
                         /* Detect and handle pre-rendered glyphs (e.g. emoji) */
                         if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
                                 /* Only the alpha channel of the mask is used, so we can
-                                * use fgfill here to blend prerendered glyphs with the
-                                * same opacity */
+                                 * use fgfill here to blend prerendered glyphs with the
+                                 * same opacity */
                                 pixman_image_composite32(
-                                        PIXMAN_OP_OVER, glyph->pix, fgfill, fglayer, 0, 0, 0, 0,
-                                        xpos + glyph->x, ypos - glyph->y, glyph->width, glyph->height);
+                                        PIXMAN_OP_OVER, glyph->pix, fgfill, fglayer,
+                                        0, 0, 0, 0, xpos + glyph->x, ypos - glyph->y,
+                                        glyph->width, glyph->height);
                         } else {
                                 /* Applying the foreground color here would mess up
-                                * component alphas for subpixel-rendered text, so we
-                                * apply it when blending. */
+                                 * component alphas for subpixel-rendered text, so we
+                                 * apply it when blending. */
                                 pixman_image_composite32(
-                                        PIXMAN_OP_OVER, fgfill, glyph->pix, fglayer, 0, 0, 0, 0,
-                                        xpos + glyph->x, ypos - glyph->y, glyph->width, glyph->height);
+                                        PIXMAN_OP_OVER, fgfill, glyph->pix, fglayer,
+                                        0, 0, 0, 0, xpos + glyph->x, ypos - glyph->y,
+                                        glyph->width, glyph->height);
                         }
                         if (textbgcolor.alpha != 0x0000)
-                                pixman_image_fill_boxes(PIXMAN_OP_OVER, bglayer,
+                                pixman_image_fill_boxes(
+                                        PIXMAN_OP_OVER, bglayer,
                                         &textbgcolor, 1, &(pixman_box32_t){
                                                 .x1 = xpos,
-                                                .x2 = MIN(xpos + glyph->advance.x, m->width),
+                                                .x2 = MIN(xpos + glyph->advance.x,
+                                                          m->width),
                                                 .y1 = yoffset,
                                                 .y2 = height - heightoffset,
                                         });
@@ -398,9 +406,9 @@ drawtext(Monitor *m, enum align align)
                 m->rightxdraw = xdraw = m->width - xpos;
 
         pixman_image_composite32(PIXMAN_OP_OVER, bglayer, NULL, dest, 0, 0, 0, 0,
-                        xdraw, 0, xpos, height);
+                                 xdraw, 0, xpos, height);
         pixman_image_composite32(PIXMAN_OP_OVER, fglayer, NULL, dest, 0, 0, 0, 0,
-                        xdraw, 0, xpos, height);
+                                 xdraw, 0, xpos, height);
 
         pixman_image_unref(bglayer);
         pixman_image_unref(fglayer);
@@ -415,7 +423,7 @@ draw_frame(Monitor *m, enum align a)
                 return NULL;
 
         uint32_t *data = mmap(NULL, m->bufsize,
-                        PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+                              PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (data == MAP_FAILED) {
                 close(fd);
                 printf("could not allocate: %d, %d\n", errno, m->bufsize);
@@ -423,20 +431,25 @@ draw_frame(Monitor *m, enum align a)
         }
 
         struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, m->bufsize);
-        struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0,
-                        m->width, height, m->stride, WL_SHM_FORMAT_ARGB8888);
+        struct wl_buffer *buffer = wl_shm_pool_create_buffer(
+                pool, 0, m->width, height, m->stride, WL_SHM_FORMAT_ARGB8888);
         wl_buffer_add_listener(buffer, &wl_buffer_listener, NULL);
         wl_shm_pool_destroy(pool);
         close(fd);
 
         /* Pixman image corresponding to main buffer */
-        pixman_image_t *bar = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-                        m->width, height, data, m->stride);
+        pixman_image_t *bar = pixman_image_create_bits(
+                PIXMAN_a8r8g8b8, m->width, height, data, m->stride);
 
         /* How should this work when there is three different "bars"? */
         if (!adjustwidth)
                 pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
-                        &(pixman_box32_t) {.x1 = 0, .x2 = m->width, .y1 = 0, .y2 = height});
+                                        &(pixman_box32_t) {
+                                                .x1 = 0,
+                                                .x2 = m->width,
+                                                .y1 = 0,
+                                                .y2 = height
+                                        });
         if (a & ALIGN_L)
                 drawtext(m, ALIGN_L);
         if (a & ALIGN_C)
@@ -446,11 +459,11 @@ draw_frame(Monitor *m, enum align a)
         }
         /* How should we handle overflows? Configurable render order? */
         pixman_image_composite32(PIXMAN_OP_OVER, m->leftlayer, NULL, bar, 0, 0, 0, 0,
-                        0, 0, m->width, height);
+                                 0, 0, m->width, height);
         pixman_image_composite32(PIXMAN_OP_OVER, m->rightlayer, NULL, bar, 0, 0, 0, 0,
-                        0, 0, m->width, height);
+                                 0, 0, m->width, height);
         pixman_image_composite32(PIXMAN_OP_OVER, m->centerlayer, NULL, bar, 0, 0, 0, 0,
-                        0, 0, m->width, height);
+                                 0, 0, m->width, height);
         pixman_image_unref(bar);
         munmap(data, m->bufsize);
         return buffer;
@@ -499,7 +512,7 @@ event_loop(void)
 
 char *
 handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
-        uint32_t *xpos, uint32_t *ypos)
+           uint32_t *xpos, uint32_t *ypos)
 {
         char *arg, *end;
 
@@ -521,10 +534,12 @@ handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
                         fprintf(stderr, "Bad color string \"%s\"\n", arg);
         } else if (!strcmp(cmd, "pa")) {
                 if (parse_movement(arg, m, xpos, ypos, 0, 0))
-                        fprintf(stderr, "Invalid absolute position argument \"%s\"\n", arg);
+                        fprintf(stderr, "Invalid absolute position argument \"%s\"\n",
+                                arg);
         } else if (!strcmp(cmd, "p")) {
                 if (parse_movement(arg, m, xpos, ypos, *xpos, *ypos))
-                        fprintf(stderr, "Invalid relative position argument \"%s\"\n", arg);
+                        fprintf(stderr, "Invalid relative position argument \"%s\"\n",
+                                arg);
         } else if (!strcmp(cmd, "sx")) {
                 savedx = *xpos;
         } else if (!strcmp(cmd, "rx")) {
@@ -541,27 +556,27 @@ handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg, pixman_color_t *fg,
 
 void
 handle_global(void *data, struct wl_registry *registry,
-                uint32_t name, const char *interface, uint32_t version)
+              uint32_t name, const char *interface, uint32_t version)
 {
         if (strcmp(interface, wl_compositor_interface.name) == 0) {
                 compositor = wl_registry_bind(registry, name,
-                                &wl_compositor_interface, 4);
+                                              &wl_compositor_interface, 4);
         } else if (strcmp(interface, wl_shm_interface.name) == 0) {
                 shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
         } else if (strcmp(interface, wl_output_interface.name) == 0) {
                 struct wl_output *o = wl_registry_bind(registry, name,
-                                &wl_output_interface, 1);
+                                                       &wl_output_interface, 1);
                 createmon(o, name);
         } else if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
                 layer_shell = wl_registry_bind(registry, name,
-                                &zwlr_layer_shell_v1_interface, 1);
+                                               &zwlr_layer_shell_v1_interface, 1);
         } else if (strcmp(interface, dscm_v1_interface.name) == 0) {
                 dscm = wl_registry_bind(registry, name,
-                                &dscm_v1_interface, 1);
+                                        &dscm_v1_interface, 1);
                 dscm_v1_add_listener(dscm, &dscm_listener, NULL);
         } else if (strcmp(interface, wl_seat_interface.name) == 0) {
                 seat = wl_registry_bind(registry, name,
-                                &wl_seat_interface, 1);
+                                        &wl_seat_interface, 1);
                 wl_seat_add_listener(seat, &seat_listener, NULL);
         }
 }
@@ -578,8 +593,8 @@ handle_global_remove(void *data, struct wl_registry *registry, uint32_t name)
 
 void
 layer_surface_configure(void *data,
-                struct zwlr_layer_surface_v1 *surface,
-                uint32_t serial, uint32_t w, uint32_t h)
+                        struct zwlr_layer_surface_v1 *surface,
+                        uint32_t serial, uint32_t w, uint32_t h)
 {
         /* Layer-surface setup adapted from layer-shell example in [wlroots] */
         Monitor *m = data;
@@ -591,11 +606,11 @@ layer_surface_configure(void *data,
         m->stride = m->width * 4;
         m->bufsize = m->stride * height;
         m->leftlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-                                m->width, height, NULL, m->stride);
+                                                m->width, height, NULL, m->stride);
         m->centerlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-                                m->width, height, NULL, m->stride);
+                                                  m->width, height, NULL, m->stride);
         m->rightlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-                                m->width, height, NULL, m->stride);
+                                                 m->width, height, NULL, m->stride);
         if (exclusive > 0)
                 exclusive = height;
         zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, exclusive);
@@ -642,7 +657,8 @@ parse_color(const char *str, pixman_color_t *clr)
 }
 
 int
-parse_movement(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos, uint32_t xoffset, uint32_t yoffset)
+parse_movement(char *str, Monitor *m, uint32_t *xpos, uint32_t *ypos,
+               uint32_t xoffset, uint32_t yoffset)
 {
         char *xarg = str;
         char *yarg;
@@ -709,14 +725,14 @@ parse_movement_arg(const char *str, uint32_t max)
 
 void
 pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
-                uint32_t time, uint32_t axis, wl_fixed_t value)
+                    uint32_t time, uint32_t axis, wl_fixed_t value)
 {
 }
 
 void
 pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
-                uint32_t serial, uint32_t time, uint32_t button,
-                uint32_t state)
+                      uint32_t serial, uint32_t time, uint32_t button,
+                      uint32_t state)
 {
         if (!activesurface || !state)
                 return;
@@ -738,8 +754,8 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
                 else if (b->align == ALIGN_R)
                         xoffset = sel->rightxdraw;
                 if ((b->ca.fromx + xoffset) <= mousex &&
-                            (b->ca.tox + xoffset) >= mousex &&
-                            b->ca.fromy <= mousey && mousey <= b->ca.toy) {
+                    (b->ca.tox + xoffset) >= mousex &&
+                    b->ca.fromy <= mousey && mousey <= b->ca.toy) {
                         /* TODO: Must pass in monitor to be able to perform click actions */
                         dscm_safe_call_click(b->click, button - BTN_MOUSE);
                         break;
@@ -749,22 +765,22 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 
 void
 pointer_handle_enter(void *data, struct wl_pointer *pointer,
-                uint32_t serial, struct wl_surface *surface,
-                wl_fixed_t sx, wl_fixed_t sy)
+                     uint32_t serial, struct wl_surface *surface,
+                     wl_fixed_t sx, wl_fixed_t sy)
 {
         activesurface = surface;
 }
 
 void
 pointer_handle_leave(void *data, struct wl_pointer *pointer,
-                uint32_t serial, struct wl_surface *surface)
+                     uint32_t serial, struct wl_surface *surface)
 {
         activesurface = NULL;
 }
 
 void
 pointer_handle_motion(void *data, struct wl_pointer *pointer,
-                uint32_t time, wl_fixed_t sx, wl_fixed_t sy)
+                      uint32_t time, wl_fixed_t sx, wl_fixed_t sy)
 {
         mousex = (uint32_t)wl_fixed_to_int(sx);
         mousey = (uint32_t)wl_fixed_to_int(sy);
@@ -772,7 +788,7 @@ pointer_handle_motion(void *data, struct wl_pointer *pointer,
 
 void
 seat_handle_capabilities(void *data, struct wl_seat *seat,
-                enum wl_seat_capability caps)
+                         enum wl_seat_capability caps)
 {
         if (caps & WL_SEAT_CAPABILITY_POINTER) {
                 struct wl_pointer *pointer = wl_seat_get_pointer(seat);
@@ -788,8 +804,8 @@ setupmon(Monitor *m)
         if (!m->wl_surface)
                 BARF("could not create wl_surface");
 
-        m->layer_surface = zwlr_layer_shell_v1_get_layer_surface(layer_shell,
-                        m->wl_surface, m->wl_output, layer, namespace);
+        m->layer_surface = zwlr_layer_shell_v1_get_layer_surface(
+                layer_shell, m->wl_surface, m->wl_output, layer, namespace);
         m->dscm = dscm_v1_get_monitor(dscm, m->wl_output);
 
         if (!m->layer_surface)
@@ -799,7 +815,7 @@ setupmon(Monitor *m)
 
         wl_list_insert(&monitors, &m->link);
         zwlr_layer_surface_v1_add_listener(m->layer_surface,
-                        &layer_surface_listener, m);
+                                           &layer_surface_listener, m);
         dscm_monitor_v1_add_listener(m->dscm, &dscm_monitor_listener, m);
         zwlr_layer_surface_v1_set_size(m->layer_surface, m->width, height);
         zwlr_layer_surface_v1_set_anchor(m->layer_surface, anchor);
@@ -815,10 +831,10 @@ updateblock(Block *b)
         if (!ret || !scm_is_string(ret))
                 return 0;
         memcpy(b->prevtext, b->text, b->length);
-        b->length = MIN(MAX_BLOCK_LEN, scm_to_locale_stringbuf(ret,
-                    b->text, MAX_BLOCK_LEN));
+        b->length = MIN(MAX_BLOCK_LEN,
+                        scm_to_locale_stringbuf(ret, b->text, MAX_BLOCK_LEN));
         return (prevlen != b->length) ||
-            memcmp(b->prevtext, b->text, MAX(prevlen, b->length)) != 0;
+                memcmp(b->prevtext, b->text, MAX(prevlen, b->length)) != 0;
 }
 
 int
@@ -828,7 +844,7 @@ updateblocks(unsigned int i, Block *blocks)
         int dirty = 0;
         for (b = blocks; b->render; b++)
                 if (i == 0 || (b->interval > 0 && i % b->interval == 0)
-                           || (unhandled && b->events))
+                    || (unhandled && b->events))
                         if (updateblock(b) != 0)
                                 dirty = 1;
         return dirty;
@@ -878,7 +894,7 @@ dscm_layout(void *data, struct dscm_v1 *d, const char *name)
 // TODO: Only add listener for colorscheme event if usewmcolorscheme == true
 void
 dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
-        const char *border, const char *focus, const char *text)
+                 const char *border, const char *focus, const char *text)
 {
         if (!usewmcolorscheme)
                 return;
@@ -890,7 +906,8 @@ dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
 
 void
 dscm_monitor_tag(void *data, struct dscm_monitor_v1 *mon, uint32_t index,
-        enum dscm_monitor_v1_tag_state state, uint32_t numclients, uint32_t focusedclient)
+                 enum dscm_monitor_v1_tag_state state, uint32_t numclients,
+                 uint32_t focusedclient)
 {
         /* TODO: Save state, numclients */
         Monitor *m = data;
