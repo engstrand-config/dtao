@@ -740,6 +740,7 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
                 if ((b->ca.fromx + xoffset) <= mousex &&
                             (b->ca.tox + xoffset) >= mousex &&
                             b->ca.fromy <= mousey && mousey <= b->ca.toy) {
+                        /* TODO: Must pass in monitor to be able to perform click actions */
                         dscm_safe_call_click(b->click, button - BTN_MOUSE);
                         break;
                 }
@@ -809,12 +810,15 @@ setupmon(Monitor *m)
 int
 updateblock(Block *b)
 {
+        uint32_t prevlen = b->length;
         SCM ret = dscm_safe_call_render(b->render, selmon);
         if (!ret || !scm_is_string(ret))
                 return 0;
         memcpy(b->prevtext, b->text, b->length);
-        b->length = MIN(MAX_BLOCK_LEN, scm_to_locale_stringbuf(ret, b->text, MAX_BLOCK_LEN));
-        return memcmp(b->prevtext, b->text, b->length);
+        b->length = MIN(MAX_BLOCK_LEN, scm_to_locale_stringbuf(ret,
+                    b->text, MAX_BLOCK_LEN));
+        return (prevlen != b->length) ||
+            memcmp(b->prevtext, b->text, MAX(prevlen, b->length)) != 0;
 }
 
 int
