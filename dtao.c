@@ -263,7 +263,7 @@ drawtext(Monitor *m, enum align align)
         int drawdelim = 0, drawstop = 0;
         pixman_color_t textbgcolor, textfgcolor;
         pixman_image_t *fgfill, *bglayer, *fglayer, *dest;
-        uint32_t yoffset, heightoffset, codepoint, ypos, xdraw, space,
+        uint32_t yoffset, heightoffset, codepoint, ypos, xdraw,
                 xpos = 0, lastcp = 0, state = UTF8_ACCEPT;
 
         /* Render the appropriate blocks based on alignment. */
@@ -756,8 +756,7 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
                 if ((b->ca.fromx + xoffset) <= mousex &&
                     (b->ca.tox + xoffset) >= mousex &&
                     b->ca.fromy <= mousey && mousey <= b->ca.toy) {
-                        /* TODO: Must pass in monitor to be able to perform click actions */
-                        dscm_safe_call_click(b->click, button - BTN_MOUSE);
+                        dscm_safe_call_click(b->click, sel, button - BTN_MOUSE);
                         break;
                 }
         }

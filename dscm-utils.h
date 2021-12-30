@@ -2,7 +2,7 @@
 
 typedef struct {
         SCM proc;
-        union { void* monitor; uint32_t button; };
+        uint32_t button;
 } dscm_call_data_t;
 
 static inline SCM
@@ -84,8 +84,7 @@ static inline void *
 dscm_call_render_callback(void *data)
 {
         dscm_call_data_t *wrapper = (dscm_call_data_t*)data;
-        SCM monitor = scm_from_pointer(wrapper->monitor, NULL);
-        return scm_call_1(wrapper->proc, monitor);
+        return scm_call_0(wrapper->proc);
 }
 
 static inline void *
@@ -96,20 +95,28 @@ dscm_call_click_callback(void *data)
         return scm_call_1(wrapper->proc, button);
 }
 
+static inline void
+dscm_expose_monitor(Monitor *m)
+{
+        scm_c_define("dtao:active-monitor!", scm_from_pointer(m, NULL));
+}
+
 static inline SCM
-dscm_safe_call_render(scm_t_bits *ptr, void *monitor)
+dscm_safe_call_render(scm_t_bits *ptr, Monitor *m)
 {
         if (ptr == NULL)
                 BARF("dscm: could not call proc that is NULL");
-        dscm_call_data_t wrapper = {.proc = SCM_PACK_POINTER(ptr), .monitor = monitor};
+        dscm_call_data_t wrapper = {.proc = SCM_PACK_POINTER(ptr)};
+        dscm_expose_monitor(m);
         return scm_c_with_continuation_barrier(&dscm_call_render_callback, &wrapper);
 }
 
 static inline SCM
-dscm_safe_call_click(scm_t_bits *ptr, uint32_t button)
+dscm_safe_call_click(scm_t_bits *ptr, Monitor *m, uint32_t button)
 {
         if (ptr == NULL)
                 BARF("dscm: could not call proc that is NULL");
         dscm_call_data_t wrapper = {.proc = SCM_PACK_POINTER(ptr), .button = button};
+        dscm_expose_monitor(m);
         return scm_c_with_continuation_barrier(&dscm_call_click_callback, &wrapper);
 }
