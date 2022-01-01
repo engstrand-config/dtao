@@ -81,9 +81,53 @@ dscm_binding_view(SCM tag)
 {
         Monitor *m = dscm_get_exposed_monitor();
         int new = scm_to_int(tag);
-        if (!m || new >= scm_to_int(scm_length(tags)))
+        if (!m)
                 return SCM_BOOL_F;
-        dscm_monitor_v1_set_tags(m->dscm, new, 1);
+        dscm_monitor_v1_set_tags(m->dscm, ((1 << new) | TAGMASK), 1);
+        return SCM_BOOL_T;
+}
+
+static inline SCM
+dscm_binding_toggleview(SCM tag)
+{
+        Monitor *m = dscm_get_exposed_monitor();
+        int toggle = scm_to_int(tag);
+        if (!m)
+                return SCM_BOOL_F;
+        dscm_monitor_v1_set_tags(m->dscm, m->activetags ^ ((1 << toggle) | TAGMASK), 0);
+        return SCM_BOOL_T;
+}
+
+static inline SCM
+dscm_binding_tag(SCM tag)
+{
+        Monitor *m = dscm_get_exposed_monitor();
+        int new = scm_to_int(tag);
+        if (!m)
+                return SCM_BOOL_F;
+        dscm_monitor_v1_set_client_tags(m->dscm, 0, ((1 << new) | TAGMASK));
+        return SCM_BOOL_T;
+}
+
+static inline SCM
+dscm_binding_toggletag(SCM tag)
+{
+        Monitor *m = dscm_get_exposed_monitor();
+        int toggle = scm_to_int(tag);
+        if (!m)
+                return SCM_BOOL_F;
+        dscm_monitor_v1_set_client_tags(m->dscm, ~0, ((1 << toggle) | TAGMASK));
+        return SCM_BOOL_T;
+}
+
+static inline SCM
+dscm_binding_setlayout(SCM layout)
+{
+        Monitor *m = dscm_get_exposed_monitor();
+        int index = scm_to_int(layout);
+        if (!m)
+                return SCM_BOOL_F;
+        dscm_monitor_v1_set_layout(m->dscm, index);
         return SCM_BOOL_T;
 }
 
@@ -126,6 +170,14 @@ dscm_register()
                            &dscm_binding_layout);
         scm_c_define_gsubr("dtao:view", 1, 0, 0,
                            &dscm_binding_view);
+        scm_c_define_gsubr("dtao:toggle-view", 1, 0, 0,
+                           &dscm_binding_toggleview);
+        scm_c_define_gsubr("dtao:tag", 1, 0, 0,
+                           &dscm_binding_tag);
+        scm_c_define_gsubr("dtao:toggle-tag", 1, 0, 0,
+                           &dscm_binding_toggletag);
+        scm_c_define_gsubr("dtao:set-layout", 1, 0, 0,
+                           &dscm_binding_setlayout);
         scm_c_define_gsubr("dtao:tags", 0, 0, 0,
                            &dscm_binding_tags);
         scm_c_define_gsubr("dtao:layouts", 0, 0, 0,
