@@ -47,12 +47,12 @@ dscm_binding_urgent_tag(SCM tag)
 }
 
 static inline SCM
-dscm_binding_selected_tag()
+dscm_binding_selected_tag(SCM tag)
 {
         Monitor *m = dscm_get_exposed_monitor();
-        if (!m)
-                return SCM_BOOL_F;
-        return scm_from_int(m->seltag);
+        if (m && scm_to_int(tag) == m->seltag)
+                return SCM_BOOL_T;
+        return SCM_BOOL_F;
 }
 
 static inline SCM
@@ -118,7 +118,7 @@ dscm_register()
                            &dscm_binding_active_tag);
         scm_c_define_gsubr("dtao:urgent-tag?", 1, 0, 0,
                            &dscm_binding_urgent_tag);
-        scm_c_define_gsubr("dtao:selected-tag", 0, 0, 0,
+        scm_c_define_gsubr("dtao:selected-tag?", 1, 0, 0,
                            &dscm_binding_selected_tag);
         scm_c_define_gsubr("dtao:title", 0, 0, 0,
                            &dscm_binding_title);
