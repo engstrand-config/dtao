@@ -264,7 +264,7 @@ drawtext(Monitor *m, enum align align)
         pixman_color_t textbgcolor, textfgcolor;
         pixman_image_t *fgfill, *bglayer, *fglayer, *dest;
         uint32_t yoffset, heightoffset, codepoint, ypos, xdraw,
-                xpos = 0, lastcp = 0, state = UTF8_ACCEPT;
+                prevxpos = 0, xpos = 0, lastcp = 0, state = UTF8_ACCEPT;
 
         /* Render the appropriate blocks based on alignment. */
         if (align == ALIGN_L) {
@@ -321,11 +321,21 @@ drawtext(Monitor *m, enum align align)
                         if (!drawdelim && state == UTF8_ACCEPT && *p == '^') {
                                 p++;
                                 if (*p != '^') {
+                                        prevxpos = xpos;
                                         p = handle_cmd(p, m, &textbgcolor,
                                                        &textfgcolor, &xpos, &ypos);
                                         pixman_image_unref(fgfill);
                                         fgfill = pixman_image_create_solid_fill(
                                                 &textfgcolor);
+                                        if (prevxpos != xpos && textbgcolor.alpha != 0x0000)
+                                                pixman_image_fill_boxes(
+                                                        PIXMAN_OP_OVER, bglayer,
+                                                        &textbgcolor, 1, &(pixman_box32_t){
+                                                                .x1 = prevxpos,
+                                                                .x2 = MIN(xpos, m->width),
+                                                                .y1 = yoffset,
+                                                                .y2 = height - heightoffset,
+                                                        });
                                         continue;
                                 }
                         }
