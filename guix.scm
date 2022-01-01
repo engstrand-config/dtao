@@ -4,6 +4,7 @@
              (guix packages)
              (guix git-download)
              (guix build-system gnu)
+             (gnu packages wm)
              (gnu packages guile)
              (gnu packages groff)
              (gnu packages xdisorg)
@@ -29,7 +30,7 @@
     `(("pkg-config" ,pkg-config)))
   (inputs
     `(("guile-3.0" ,guile-3.0)
-      ("wlroots-0.14.0" ,wlroots-0.14.0)
+      ("wlroots" ,wlroots)
       ("fcft" ,fcft)
       ("pixman" ,pixman)
       ("groff" ,groff)
