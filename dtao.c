@@ -60,8 +60,8 @@ typedef struct {
         struct zwlr_layer_surface_v1 *layer_surface;
         struct dscm_monitor_v1 *dscm;
         pixman_image_t *leftlayer, *centerlayer, *rightlayer;
-        uint32_t name, width, stride, bufsize, layout, activetags,
-                centerxdraw, rightxdraw;
+        uint32_t name, width, stride, bufsize, layout,
+                activetags, urgenttags, seltag, centerxdraw, rightxdraw;
         char title[MAX_BLOCK_LEN];
 } Monitor;
 
@@ -908,12 +908,19 @@ dscm_monitor_tag(void *data, struct dscm_monitor_v1 *mon, uint32_t index,
                  enum dscm_monitor_v1_tag_state state, uint32_t numclients,
                  uint32_t focusedclient)
 {
-        /* TODO: Save state, numclients */
         Monitor *m = data;
+        uint32_t mask = ((1 << index) | TAGMASK);
+
+        m->urgenttags &= ~mask;
         if (numclients > 0)
-                m->activetags |= ((1 << index) | TAGMASK);
+                m->activetags |= mask;
         else
-                m->activetags &= ~((1 << index) | TAGMASK);
+                m->activetags &= ~mask;
+
+        if (state == DSCM_MONITOR_V1_TAG_STATE_ACTIVE)
+                m->seltag = index;
+        else if (state == DSCM_MONITOR_V1_TAG_STATE_URGENT)
+                m->urgenttags |= mask;
 }
 
 void

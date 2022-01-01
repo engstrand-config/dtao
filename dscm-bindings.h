@@ -1,5 +1,15 @@
 #pragma once
 
+static inline SCM
+dscm_enabled_in_tagset(SCM tag, uint32_t tagset)
+{
+        int index = scm_to_int(tag);
+        if (tagset & (1 << index))
+                return SCM_BOOL_T;
+        return SCM_BOOL_F;
+
+}
+
 static inline Monitor *
 dscm_get_exposed_monitor()
 {
@@ -9,9 +19,6 @@ dscm_get_exposed_monitor()
         return scm_to_pointer(ptr);
 }
 
-/* TODO: Can the monitor be bound to the execution context
- * of the blocks, such that it must not be specified as
- * an argument? */
 static inline SCM
 dscm_binding_selected_monitor()
 {
@@ -22,13 +29,30 @@ dscm_binding_selected_monitor()
 }
 
 static inline SCM
-dscm_binding_selected_tag(SCM tag)
+dscm_binding_active_tag(SCM tag)
 {
         Monitor *m = dscm_get_exposed_monitor();
-        int index = scm_to_int(tag);
-        if (m && (m->activetags & (1 << (index - 1))))
-                return SCM_BOOL_T;
-        return SCM_BOOL_F;
+        if (!m)
+                return SCM_BOOL_F;
+        return dscm_enabled_in_tagset(tag, m->activetags);
+}
+
+static inline SCM
+dscm_binding_urgent_tag(SCM tag)
+{
+        Monitor *m = dscm_get_exposed_monitor();
+        if (!m)
+                return SCM_BOOL_F;
+        return dscm_enabled_in_tagset(tag, m->urgenttags);
+}
+
+static inline SCM
+dscm_binding_selected_tag()
+{
+        Monitor *m = dscm_get_exposed_monitor();
+        if (!m)
+                return SCM_BOOL_F;
+        return scm_from_int(m->seltag);
 }
 
 static inline SCM
@@ -90,7 +114,11 @@ dscm_register()
 
         scm_c_define_gsubr("dtao:selected-monitor?", 0, 0, 0,
                            &dscm_binding_selected_monitor);
-        scm_c_define_gsubr("dtao:selected-tag?", 1, 0, 0,
+        scm_c_define_gsubr("dtao:active-tag?", 1, 0, 0,
+                           &dscm_binding_active_tag);
+        scm_c_define_gsubr("dtao:urgent-tag?", 1, 0, 0,
+                           &dscm_binding_urgent_tag);
+        scm_c_define_gsubr("dtao:selected-tag", 0, 0, 0,
                            &dscm_binding_selected_tag);
         scm_c_define_gsubr("dtao:title", 0, 0, 0,
                            &dscm_binding_title);
