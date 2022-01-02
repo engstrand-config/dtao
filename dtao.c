@@ -49,7 +49,6 @@ typedef struct {
         uint32_t tox;
         uint32_t fromy;
         uint32_t toy;
-        uint32_t button;
 } ClickableArea;
 
 typedef struct {
@@ -759,12 +758,11 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
         if (!sel)
                 return;
         wl_list_for_each(b, &cas, clink) {
-                if (b->align == ALIGN_L)
-                        xoffset = 0;
-                else if (b->align == ALIGN_C)
-                        xoffset = sel->centerxdraw;
+                xoffset = padleft;
+                if (b->align == ALIGN_C)
+                        xoffset += sel->centerxdraw;
                 else if (b->align == ALIGN_R)
-                        xoffset = sel->rightxdraw;
+                        xoffset += sel->rightxdraw;
                 if ((b->ca.fromx + xoffset) <= mousex &&
                     (b->ca.tox + xoffset) >= mousex &&
                     b->ca.fromy <= mousey && mousey <= b->ca.toy) {
