@@ -121,6 +121,12 @@ dscm_binding_toggletag(SCM tag)
 }
 
 static inline SCM
+dscm_binding_tags()
+{
+        return tags;
+}
+
+static inline SCM
 dscm_binding_setlayout(SCM layout)
 {
         Monitor *m = dscm_get_exposed_monitor();
@@ -132,9 +138,30 @@ dscm_binding_setlayout(SCM layout)
 }
 
 static inline SCM
-dscm_binding_tags()
+dscm_binding_nextlayout()
 {
-        return tags;
+        Monitor *m = dscm_get_exposed_monitor();
+        if (!m)
+                return SCM_BOOL_F;
+        /* The selected layout will be updated once the compositor
+         * has acknowledged the updated layout (dscm_monitor_layout event). */
+        if (m->layout >= numlayouts - 1)
+                dscm_monitor_v1_set_layout(m->dscm, 0);
+        else
+                dscm_monitor_v1_set_layout(m->dscm, m->layout + 1);
+        return SCM_BOOL_T;
+}
+
+static inline SCM
+dscm_binding_getlayout()
+{
+        Monitor *m = dscm_get_exposed_monitor();
+        if (!m)
+                return SCM_BOOL_F;
+        SCM name = scm_list_ref(layouts, scm_from_int(m->layout));
+        if (!name)
+                return SCM_BOOL_F;
+        return name;
 }
 
 static inline SCM
@@ -178,6 +205,10 @@ dscm_register()
                            &dscm_binding_toggletag);
         scm_c_define_gsubr("dtao:set-layout", 1, 0, 0,
                            &dscm_binding_setlayout);
+        scm_c_define_gsubr("dtao:next-layout", 0, 0, 0,
+                           &dscm_binding_nextlayout);
+        scm_c_define_gsubr("dtao:get-layout", 0, 0, 0,
+                           &dscm_binding_getlayout);
         scm_c_define_gsubr("dtao:tags", 0, 0, 0,
                            &dscm_binding_tags);
         scm_c_define_gsubr("dtao:layouts", 0, 0, 0,

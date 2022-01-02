@@ -91,7 +91,7 @@ static Monitor *selmon;
 static char *namespace = "dtao";
 static bool running = true;
 static uint32_t savedx = 0, mousex = 0, mousey = 0,
-        unhandled = 0, TAGMASK = 0;
+        unhandled = 0, TAGMASK = 0, numlayouts = 0;
 static SCM tags, layouts;
 
 /* function declarations */
@@ -900,6 +900,7 @@ dscm_layout(void *data, struct dscm_v1 *d, const char *name)
         SCM new = scm_list_1(scm_from_locale_string(name));
         SCM args = scm_list_2(layouts, new);
         layouts = scm_append(args);
+        numlayouts++;
 }
 
 // TODO: Only add listener for colorscheme event if usewmcolorscheme == true
@@ -994,6 +995,10 @@ main(int argc, char **argv)
         scm_init_guile();
         dscm_register();
         dscm_config_parse(configfile);
+
+        /* Prevent tags and layouts from being garbage collected. */
+        scm_gc_protect_object(layouts);
+        scm_gc_protect_object(tags);
 
         /* Initialize tags and layout lists */
         tags = scm_list_n(SCM_UNDEFINED);
