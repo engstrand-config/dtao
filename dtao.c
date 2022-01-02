@@ -264,7 +264,8 @@ drawtext(Monitor *m, enum align align)
         pixman_color_t textbgcolor, textfgcolor;
         pixman_image_t *fgfill, *bglayer, *fglayer, *dest;
         uint32_t yoffset, heightoffset, codepoint, ypos, xdraw,
-                prevxpos = 0, xpos = 0, lastcp = 0, state = UTF8_ACCEPT;
+                prevxpos = 0, xpos = 0, lastcp = 0, state = UTF8_ACCEPT,
+                contentwidth = m->width - padleft - padright;
 
         /* Render the appropriate blocks based on alignment. */
         if (align == ALIGN_L) {
@@ -285,7 +286,7 @@ drawtext(Monitor *m, enum align align)
         /* Create new buffer for blocks */
         pixman_image_unref(dest);
         dest = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-                                        m->width, height, NULL, m->stride);
+                                        contentwidth, height, NULL, m->stride);
 
         /* Colors (premultiplied!) */
         textbgcolor = bgcolor;
@@ -293,9 +294,9 @@ drawtext(Monitor *m, enum align align)
 
         fgfill = pixman_image_create_solid_fill(&textfgcolor);
         bglayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-                                           m->width, height, NULL, m->stride);
+                                           contentwidth, height, NULL, m->stride);
         fglayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-                                           m->width, height, NULL, m->stride);
+                                           contentwidth, height, NULL, m->stride);
 
         yoffset = isbottom ? borderpx : 0;
         heightoffset = isbottom ? 0 : borderpx;
@@ -312,7 +313,7 @@ drawtext(Monitor *m, enum align align)
                 }
                 for (p = start; p != end; p++) {
                         /* Stop drawing when exceeding the monitor width. */
-                        if (xpos >= m->width) {
+                        if (xpos >= contentwidth) {
                                 drawstop = 1;
                                 break;
                         }
@@ -332,7 +333,7 @@ drawtext(Monitor *m, enum align align)
                                                         PIXMAN_OP_OVER, bglayer,
                                                         &textbgcolor, 1, &(pixman_box32_t){
                                                                 .x1 = prevxpos,
-                                                                .x2 = MIN(xpos, m->width),
+                                                                .x2 = MIN(xpos, contentwidth),
                                                                 .y1 = yoffset,
                                                                 .y2 = height - heightoffset,
                                                         });
@@ -381,7 +382,7 @@ drawtext(Monitor *m, enum align align)
                                         &textbgcolor, 1, &(pixman_box32_t){
                                                 .x1 = xpos,
                                                 .x2 = MIN(xpos + glyph->advance.x,
-                                                          m->width),
+                                                          contentwidth),
                                                 .y1 = yoffset,
                                                 .y2 = height - heightoffset,
                                         });
@@ -411,9 +412,9 @@ drawtext(Monitor *m, enum align align)
         if (align == ALIGN_L)
                 xdraw = 0;
         else if (align == ALIGN_C)
-                m->centerxdraw = xdraw = (m->width - xpos) / 2;
+                m->centerxdraw = xdraw = (contentwidth - xpos) / 2;
         else if (align == ALIGN_R)
-                m->rightxdraw = xdraw = m->width - xpos;
+                m->rightxdraw = xdraw = contentwidth - xpos;
 
         pixman_image_composite32(PIXMAN_OP_OVER, bglayer, NULL, dest, 0, 0, 0, 0,
                                  xdraw, 0, xpos, height);
@@ -467,13 +468,14 @@ draw_frame(Monitor *m, enum align a)
         if (a & ALIGN_R) {
                 drawtext(m, ALIGN_R);
         }
+
         /* How should we handle overflows? Configurable render order? */
         pixman_image_composite32(PIXMAN_OP_OVER, m->leftlayer, NULL, bar, 0, 0, 0, 0,
-                                 0, 0, m->width, height);
+                                 padleft, 0, m->width - padright, height);
         pixman_image_composite32(PIXMAN_OP_OVER, m->rightlayer, NULL, bar, 0, 0, 0, 0,
-                                 0, 0, m->width, height);
+                                 padleft, 0, m->width - padright, height);
         pixman_image_composite32(PIXMAN_OP_OVER, m->centerlayer, NULL, bar, 0, 0, 0, 0,
-                                 0, 0, m->width, height);
+                                 padleft, 0, m->width - padright, height);
         pixman_image_unref(bar);
         munmap(data, m->bufsize);
         return buffer;
@@ -1005,7 +1007,7 @@ main(int argc, char **argv)
 
         /* Set layer size and positioning */
         if (!height)
-                height = font->height + font->descent + borderpx;
+                height = font->height + font->descent + borderpx + padbottom + padtop;
 
         /* Register mouse clicks for all vertical space of bar */
         wl_list_for_each(b, &cas, clink)

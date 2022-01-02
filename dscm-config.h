@@ -16,6 +16,12 @@ static char *delimiter                  = NULL;
 static char *delimiterend               = NULL;
 static uint32_t spacing                 = 10;
 
+/* Bar padding */
+static int padtop                       = 0;
+static int padbottom                    = 0;
+static int padleft                      = 0;
+static int padright                     = 0;
+
 /* positioning */
 static int layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;;
 static int anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
@@ -87,12 +93,17 @@ dscm_config_parse(char *configfile)
         usewmcolorscheme = dscm_alist_get_int(config, "use-dwl-guile-colorscheme");
         delimiter = dscm_alist_get_string(config, "delimiter");
         spacing = dscm_alist_get_int(config, "block-spacing");
+        padtop = dscm_alist_get_int(config, "padding-top");
+        padbottom = dscm_alist_get_int(config, "padding-bottom");
+        padleft = dscm_alist_get_int(config, "padding-left");
+        padright = dscm_alist_get_int(config, "padding-right");
 
         if (delimiter)
                 delimiterend = delimiter + strlen(delimiter);
         if (isbottom)
                 anchor ^= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
                           ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
+
         if (!usewmcolorscheme) {
                 char *bgstr, *fgstr, *borderstr;
                 bgstr = dscm_alist_get_string(config, "background-color");
