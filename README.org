@@ -1,0 +1,24 @@
+* =dtao-guile=
+A general-purpose status bar for [[https://github.com/engstrand-config/dwl-guile][ =dwl-guile= ]], configurable in [[https://www.gnu.org/software/guile/][GNU Guile]].
+=dtao-guile= is based around ``blocks'' (clock, tags etc.) that the user writes in Guile.
+
+=dtao-guile= supports the IPC protocol, which =dwl-guile= implements.
+This enables features like clickability for tags and more.
+
+** Goal
+We wanted a hackable, simple status bar that we could configure in Guile.
+The project started out as a fork of [[https://github.com/djpohly/dtao][ =dtao= ]]but has diverged from creator djpohly's original concept.
+
+** Installation
+#+begin_quote
+=dtao-guile= is still under development, so proceed with caution!
+#+end_quote
+
+The best way to install and use =dtao-guile= is through our Guix channel  [[https://github.com/engstrand-config/home-service-dtao-guile][home-service-dtao-guile]], which (as the name suggests) provides a [[https://guix.gnu.org/manual/devel/en/html_node/Home-Configuration.html][Guix Home]] service for =dtao-guile=.
+
+** Dependencies
+- =fcft=
+- =pixman=
+- =libwayland-client=
+- =ruby-ronn=
+- =libguile=
