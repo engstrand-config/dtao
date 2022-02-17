@@ -345,7 +345,7 @@ drawtext(Monitor *m, enum align align)
 
                         /* Turn off subpixel rendering, which complicates things when
                          * mixed with alpha channels */
-                        const struct fcft_glyph *glyph = fcft_glyph_rasterize(
+                        const struct fcft_glyph *glyph = fcft_rasterize_char_utf32(
                                 font, codepoint, FCFT_SUBPIXEL_NONE);
                         if (!glyph)
                                 continue;
@@ -1003,6 +1003,7 @@ main(int argc, char **argv)
         layouts = scm_list_n(SCM_UNDEFINED);
 
         /* Load selected font */
+        fcft_init(FCFT_LOG_COLORIZE_AUTO, 0, FCFT_LOG_CLASS_ERROR);
         fcft_set_scaling_filter(FCFT_SCALING_FILTER_LANCZOS3);
         font = fcft_from_name(1, (const char *[]) {fontstr}, NULL);
         if (!font)
@@ -1037,6 +1038,7 @@ main(int argc, char **argv)
         dscm_config_cleanup();
         zwlr_layer_shell_v1_destroy(layer_shell);
         fcft_destroy(font);
+        fcft_fini();
         wl_shm_destroy(shm);
         wl_compositor_destroy(compositor);
         wl_registry_destroy(registry);
