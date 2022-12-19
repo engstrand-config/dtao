@@ -136,8 +136,6 @@ static void updatestatus(unsigned int iteration);
 static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 
 /* dscm protocol */
-static void dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
-			     const char *border, const char *focus, const char *text);
 static void dscm_layout(void *data, struct dscm_v1 *d, const char *name);
 static void dscm_tag(void *data, struct dscm_v1 *d, const char *name);
 static void dscm_monitor_frame(void *data, struct dscm_monitor_v1 *mon);
@@ -177,8 +175,8 @@ static const struct wl_pointer_listener pointer_listener = {
 static const struct dscm_v1_listener dscm_listener = {
 	.tag = dscm_tag,
 	.layout = dscm_layout,
-	.colorscheme = dscm_colorscheme,
 };
+
 static const struct dscm_monitor_v1_listener dscm_monitor_listener = {
 	.tag = dscm_monitor_tag,
 	.layout = dscm_monitor_layout,
@@ -883,7 +881,7 @@ wl_buffer_release(void *data, struct wl_buffer *wl_buffer)
 	wl_buffer_destroy(wl_buffer);
 }
 
-/* dscm protocol implementation */
+/* dscm protocol handlers */
 void
 dscm_tag(void *data, struct dscm_v1 *d, const char *name)
 {
@@ -899,19 +897,6 @@ dscm_layout(void *data, struct dscm_v1 *d, const char *name)
 	SCM args = scm_list_2(layouts, new);
 	layouts = scm_append(args);
 	numlayouts++;
-}
-
-// TODO: Only add listener for colorscheme event if usewmcolorscheme == true
-void
-dscm_colorscheme(void *data, struct dscm_v1 *d, const char *root,
-		 const char *border, const char *focus, const char *text)
-{
-	if (!usewmcolorscheme)
-		return;
-	parse_color(root, &bgcolor);
-	parse_color(text, &fgcolor);
-	parse_color(border, &bordercolor);
-	drawbars(ALIGN_L | ALIGN_C | ALIGN_R);
 }
 
 void

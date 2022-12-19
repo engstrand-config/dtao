@@ -8,7 +8,6 @@ static uint32_t height                  = 0;
 static int exclusive                    = -1;
 static int adjustwidth                  = 0;
 static int isbottom                     = 0;
-static int usewmcolorscheme             = 0;
 static int borderpx                     = 0;
 static char *fontstr                    = "";
 static int updateinterval               = 1;
@@ -91,7 +90,6 @@ dscm_config_parse(char *configfile)
 	exclusive = dscm_alist_get_int(config, "exclusive");
 	isbottom = dscm_alist_get_int(config, "bottom");
 	adjustwidth = dscm_alist_get_int(config, "adjust-width");
-	usewmcolorscheme = dscm_alist_get_int(config, "use-dwl-guile-colorscheme");
 	delimiter = dscm_alist_get_string(config, "delimiter");
 	spacing = dscm_alist_get_int(config, "block-spacing");
 	padtop = dscm_alist_get_int(config, "padding-top");
@@ -105,18 +103,16 @@ dscm_config_parse(char *configfile)
 		anchor ^= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
 			ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
 
-	if (!usewmcolorscheme) {
-		char *bgstr, *fgstr, *borderstr;
-		bgstr = dscm_alist_get_string(config, "background-color");
-		fgstr = dscm_alist_get_string(config, "foreground-color");
-		borderstr = dscm_alist_get_string(config, "border-color");
-		parse_color(bgstr, &bgcolor);
-		parse_color(fgstr, &fgcolor);
-		parse_color(borderstr, &bordercolor);
-		free(bgstr);
-		free(fgstr);
-		free(borderstr);
-	}
+	char *bgstr, *fgstr, *borderstr;
+	bgstr = dscm_alist_get_string(config, "background-color");
+	fgstr = dscm_alist_get_string(config, "foreground-color");
+	borderstr = dscm_alist_get_string(config, "border-color");
+	parse_color(bgstr, &bgcolor);
+	parse_color(fgstr, &fgcolor);
+	parse_color(borderstr, &bordercolor);
+	free(bgstr);
+	free(fgstr);
+	free(borderstr);
 
 	barlayer = dscm_alist_get(config, "layer");
 	eval = scm_primitive_eval(barlayer);
