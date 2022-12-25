@@ -26,15 +26,13 @@
   (home-page "https://github.com/engstrand-config/dtao")
   (source source)
   (build-system gnu-build-system)
-  (native-inputs
-    `(("pkg-config" ,pkg-config)))
-  (inputs
-    `(("guile-3.0" ,guile-3.0)
-      ("wlroots" ,wlroots)
-      ("fcft" ,fcft)
-      ("pixman" ,pixman)
-      ("groff" ,groff)
-      ("ronn" ,ronn-ng)))
+  (native-inputs (list pkg-config))
+  (inputs (list guile-3.0
+                wlroots-0.16.0
+                fcft
+                pixman
+                groff
+                ronn-ng))
   (arguments
     `(#:tests? #f
       #:make-flags
@@ -42,8 +40,16 @@
         (string-append "CC=" ,(cc-for-target))
         (string-append "PREFIX=" (assoc-ref %outputs "out")))
       #:phases
-      (modify-phases %standard-phases
-                     (delete 'configure))))
+      (modify-phases
+       %standard-phases
+       (delete 'configure)
+       (replace 'install
+                (lambda* (#:key inputs outputs #:allow-other-keys)
+                  (let ((bin (string-append (assoc-ref outputs "out") "/bin")))
+                    (install-file "dtao" bin)
+                    (rename-file (string-append bin "/dtao")
+                                 (string-append bin "/dtao-guile-devel"))
+                    #t))))))
   (license (list license:gpl3+ license:expat license:cc0))
   (synopsis "dtao - dzen for Wayland")
   (description
