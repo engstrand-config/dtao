@@ -138,6 +138,8 @@ static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 /* dscm protocol */
 static void dscm_layout(void *data, struct dscm_v1 *d, const char *name);
 static void dscm_tag(void *data, struct dscm_v1 *d, const char *name);
+static void dscm_eval_result(void *data, struct dscm_v1 *d, const char *result,
+			     uint32_t status);
 static void dscm_monitor_frame(void *data, struct dscm_monitor_v1 *mon);
 static void dscm_monitor_layout(void *data, struct dscm_monitor_v1 *mon,
 				uint32_t index);
@@ -175,6 +177,7 @@ static const struct wl_pointer_listener pointer_listener = {
 static const struct dscm_v1_listener dscm_listener = {
 	.tag = dscm_tag,
 	.layout = dscm_layout,
+	.eval_result = dscm_eval_result,
 };
 
 static const struct dscm_monitor_v1_listener dscm_monitor_listener = {
@@ -898,6 +901,10 @@ dscm_layout(void *data, struct dscm_v1 *d, const char *name)
 	layouts = scm_append(args);
 	numlayouts++;
 }
+
+void
+dscm_eval_result(void *data, struct dscm_v1 *d, const char *result, uint32_t status)
+{}
 
 void
 dscm_monitor_tag(void *data, struct dscm_monitor_v1 *mon, uint32_t index,
