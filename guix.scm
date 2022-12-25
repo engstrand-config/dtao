@@ -28,7 +28,7 @@
   (build-system gnu-build-system)
   (native-inputs (list pkg-config))
   (inputs (list guile-3.0
-                wlroots-0.16.0
+                wlroots
                 fcft
                 pixman
                 groff
