@@ -16,6 +16,20 @@ The project started out as a fork of [[https://github.com/djpohly/dtao][ =dtao= 
 
 The best way to install and use =dtao-guile= is through our Guix channel  [[https://github.com/engstrand-config/home-service-dtao-guile][home-service-dtao-guile]], which (as the name suggests) provides a [[https://guix.gnu.org/manual/devel/en/html_node/Home-Configuration.html][Guix Home]] service for =dtao-guile=.
 
+** Running
+
+As mentioned in the installation section, it's better to run =dtao-guile= via [[https://github.com/engstrand-config/home-service-dtao-guile][home-service-dtao-guile]]. However, you can still run the program easily on any Linux distribution.
+
+=dtao-guile= expects a configuration file to be provided via the =-c= command-line option (See [[./example/config.scm][./example/config.scm]]).
+
+#+begin_src sh
+  dtao -c ./example/config.scm &
+#+end_src
+
+With the provided configuration in the [[./example][example folder]], the status bar will look like this.
+
+[[./images/screenshot.png]]
+
 ** Dependencies
 - =fcft=
 - =pixman=
