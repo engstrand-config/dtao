@@ -259,7 +259,7 @@ void
 drawtext(Monitor *m, enum align align)
 {
 	Block *b, *blocks;
-	char *p, *start, *end;
+	char *p, *start, *end, *delimiter, *delimiterend;
 	int drawdelim = 0, drawstop = 0;
 	pixman_color_t textbgcolor, textfgcolor;
 	pixman_image_t *fgfill, *bglayer, *fglayer, *dest;
@@ -271,12 +271,18 @@ drawtext(Monitor *m, enum align align)
 	if (align == ALIGN_L) {
 		dest = m->leftlayer;
 		blocks = leftblocks;
+		delimiter = delimiterl;
+		delimiterend = delimiterlend;
 	} else if (align == ALIGN_C) {
 		dest = m->centerlayer;
 		blocks = centerblocks;
+		delimiter = delimiterc;
+		delimiterend = delimitercend;
 	} else if (align == ALIGN_R) {
 		dest = m->rightlayer;
 		blocks = rightblocks;
+		delimiter = delimiterr;
+		delimiterend = delimiterrend;
 	}
 
 	/* Can this ever be NULL? */

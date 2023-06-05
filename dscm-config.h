@@ -11,8 +11,12 @@ static int isbottom                     = 0;
 static int borderpx                     = 0;
 static char *fontstr                    = "";
 static int updateinterval               = 1;
-static char *delimiter                  = NULL;
-static char *delimiterend               = NULL;
+static char *delimiterl                 = NULL;
+static char *delimiterlend              = NULL;
+static char *delimiterc                 = NULL;
+static char *delimitercend              = NULL;
+static char *delimiterr                 = NULL;
+static char *delimiterrend              = NULL;
 static uint32_t spacing                 = 10;
 
 /* Bar padding */
@@ -90,15 +94,21 @@ dscm_config_parse(char *configfile)
 	exclusive = dscm_alist_get_int(config, "exclusive");
 	isbottom = dscm_alist_get_int(config, "bottom");
 	adjustwidth = dscm_alist_get_int(config, "adjust-width");
-	delimiter = dscm_alist_get_string(config, "delimiter");
+	delimiterl = dscm_alist_get_string(config, "delimiter-left");
+	delimiterc = dscm_alist_get_string(config, "delimiter-center");
+	delimiterr = dscm_alist_get_string(config, "delimiter-right");
 	spacing = dscm_alist_get_int(config, "block-spacing");
 	padtop = dscm_alist_get_int(config, "padding-top");
 	padbottom = dscm_alist_get_int(config, "padding-bottom");
 	padleft = dscm_alist_get_int(config, "padding-left");
 	padright = dscm_alist_get_int(config, "padding-right");
 
-	if (delimiter)
-		delimiterend = delimiter + strlen(delimiter);
+	if (delimiterl)
+		delimiterlend = delimiterl + strlen(delimiterl);
+	if (delimiterc)
+		delimitercend = delimiterc + strlen(delimiterc);
+	if (delimiterr)
+		delimiterrend = delimiterr + strlen(delimiterr);
 	if (isbottom)
 		anchor ^= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
 			ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
