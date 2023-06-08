@@ -49,7 +49,7 @@ dscm-unstable-v1-protocol.c:
 
 dscm-unstable-v1-protocol.o: dscm-unstable-v1-protocol.h
 
-dtao.o: utf8.h xdg-shell-protocol.h wlr-layer-shell-unstable-v1-protocol.h dscm-unstable-v1-protocol.h
+dtao.o: dscm/config.h dscm/utils.h dscm/bindings.h utf8.h xdg-shell-protocol.h wlr-layer-shell-unstable-v1-protocol.h dscm-unstable-v1-protocol.h
 
 # Protocol dependencies
 dtao: xdg-shell-protocol.o wlr-layer-shell-unstable-v1-protocol.o dscm-unstable-v1-protocol.o

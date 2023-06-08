@@ -189,9 +189,9 @@ static const struct dscm_monitor_v1_listener dscm_monitor_listener = {
 };
 
 /* include guile config parameters */
-#include "dscm-utils.h"
-#include "dscm-bindings.h"
-#include "dscm-config.h"
+#include "dscm/utils.h"
+#include "dscm/bindings.h"
+#include "dscm/config.h"
 
 /* function implementations */
 int
