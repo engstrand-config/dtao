@@ -18,31 +18,25 @@
 #include <wayland-client.h>
 #include <linux/input.h>
 #include <libguile.h>
+
 #include "utf8.h"
 #include "wlr-layer-shell-unstable-v1-protocol.h"
 #include "dscm-unstable-v1-protocol.h"
 #include "xdg-shell-protocol.h"
 
-/* macros */
+#define PROGRAM "dtao-guile"
+#define VERSION "1.0"
+#define USAGE "Usage: %s [-c path to config.scm]"
+
+#define MAX_LINE_LEN 8192
+#define MAX_BLOCK_LEN 128
+
 #define BARF(fmt, ...)		do { fprintf(stderr, fmt "\n", ##__VA_ARGS__); exit(EXIT_FAILURE); } while (0)
 #define EBARF(fmt, ...)		BARF(fmt ": %s", ##__VA_ARGS__, strerror(errno))
 #define MIN(a, b)               ((a) < (b) ? (a) : (b))
 #define MAX(a, b)               ((a) > (b) ? (a) : (b))
 
-#define PROGRAM "dtao"
-#define VERSION "0.1"
-#define COPYRIGHT "copyright 2021 Devin J. Pohly and dtao team"
-#define USAGE                                                           \
-	"usage: dtao [-v] [-ta <l|c|r>] [-sa <l|c|r>] [-h <pixel>]\n"   \
-	"            [-e <string>] [-fn <font>] [-bg <color>] [-fg <color>]\n" \
-	"            [-a] [-z [-z]] [-xs <screen>]"
-
-/* Includes the newline character */
-#define MAX_LINE_LEN 8192
-#define MAX_BLOCK_LEN 128
-
-/* enums */
-enum align { ALIGN_UNSET = 0, ALIGN_L = 1, ALIGN_C = 2, ALIGN_R = 4 };
+enum align { ALIGN_L, ALIGN_C, ALIGN_R };
 
 typedef struct {
 	uint32_t fromx;
@@ -55,10 +49,8 @@ typedef struct {
 	struct wl_list link;
 	struct wl_output *wl_output;
 	struct wl_surface *wl_surface;
-	struct wl_buffer *wl_buffer;
 	struct zwlr_layer_surface_v1 *layer_surface;
 	struct dscm_monitor_v1 *dscm;
-	pixman_image_t *leftlayer, *centerlayer, *rightlayer;
 	uint32_t name, width, stride, bufsize, layout,
 		activetags, urgenttags, seltag, centerxdraw, rightxdraw;
 	char title[MAX_BLOCK_LEN];
@@ -82,7 +74,7 @@ typedef struct {
 	ClickableArea ca;
 } Block;
 
-/* variables */
+/* Variables */
 static struct dscm_v1 *dscm;
 static struct fcft_font *font;
 static struct zwlr_layer_shell_v1 *layer_shell;
@@ -100,28 +92,35 @@ static uint32_t savedx = 0, mousex = 0, mousey = 0,
 	unhandled = 0, TAGMASK = 0, numlayouts = 0;
 static SCM tags, layouts;
 
-/* function declarations */
-static int allocate_shm_file(size_t size);
+/* Function declarations */
+static int createbuffer(size_t size);
 static void createmon(struct wl_output *output, uint32_t name);
 static void destroymon(Monitor *m);
-static struct wl_buffer *draw_frame(Monitor *m, enum align a);
-static void drawbar(Monitor *m, enum align a);
-static void drawbars(enum align a);
-static void drawtext(Monitor *m, enum align align);
-static void event_loop(void);
+static void drawbar(Monitor *m);
+static void drawbars();
+static void drawgroups(Monitor *m);
+static void drawtext(Monitor *m);
+static void eventloop(void);
 static char *handle_cmd(char *cmd, Monitor *m, pixman_color_t *bg,
 			pixman_color_t *fg, uint32_t *xpos, uint32_t *ypos);
-static void handle_global(void *data, struct wl_registry *registry,
-			  uint32_t name, const char *interface, uint32_t version);
-static void handle_global_remove(void *data, struct wl_registry *registry,
-				 uint32_t name);
-static void layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
-				    uint32_t serial, uint32_t w, uint32_t h);
-static void layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface);
 static int parse_color(const char *str, pixman_color_t *clr);
 static int parse_movement(char *str, Monitor *m, uint32_t *xpos,
 			  uint32_t *ypos, uint32_t xoffset, uint32_t yoffset);
 static int parse_movement_arg(const char *str, uint32_t max);
+static void setupmon(Monitor *m);
+static int updateblock(Monitor *m, Block *b);
+static int updateblocks(Monitor *m, unsigned int iteration);
+static void updatebars(unsigned int iteration);
+
+/* Event listeners */
+static void handle_global(void *data, struct wl_registry *registry,
+			  uint32_t name, const char *interface, uint32_t version);
+static void handle_global_remove(void *data, struct wl_registry *registry,
+				 uint32_t name);
+static void handle_buffer_release(void *data, struct wl_buffer *wl_buffer);
+static void layer_surface_configure(void *data, struct zwlr_layer_surface_v1 *surface,
+				    uint32_t serial, uint32_t w, uint32_t h);
+static void layer_surface_closed(void *data, struct zwlr_layer_surface_v1 *surface);
 static void pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
 				uint32_t time, uint32_t axis, wl_fixed_t value);
 static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
@@ -136,11 +135,6 @@ static void pointer_handle_motion(void *data, struct wl_pointer *pointer,
 				  uint32_t time, wl_fixed_t sx, wl_fixed_t sy);
 static void seat_handle_capabilities(void *data, struct wl_seat *seat,
 				     enum wl_seat_capability caps);
-static void setupmon(Monitor *m);
-static int updateblock(Block *b);
-static int updateblocks(unsigned int iteration, Block *blocks);
-static void updatestatus(unsigned int iteration);
-static void wl_buffer_release(void *data, struct wl_buffer *wl_buffer);
 
 /* dscm protocol */
 static void dscm_layout(void *data, struct dscm_v1 *d, const char *name);
@@ -163,7 +157,7 @@ static const struct wl_registry_listener registry_listener = {
 	.global_remove = handle_global_remove,
 };
 static const struct wl_buffer_listener wl_buffer_listener = {
-	.release = wl_buffer_release,
+	.release = handle_buffer_release,
 };
 static struct zwlr_layer_surface_v1_listener layer_surface_listener = {
 	.configure = layer_surface_configure,
@@ -173,11 +167,11 @@ static const struct wl_seat_listener seat_listener = {
 	seat_handle_capabilities,
 };
 static const struct wl_pointer_listener pointer_listener = {
-	pointer_handle_enter,
-	pointer_handle_leave,
-	pointer_handle_motion,
-	pointer_handle_button,
-	pointer_handle_axis,
+	.enter = pointer_handle_enter,
+	.leave = pointer_handle_leave,
+	.motion = pointer_handle_motion,
+	.button = pointer_handle_button,
+	.axis = pointer_handle_axis,
 };
 
 /* dscm protocol */
@@ -195,14 +189,12 @@ static const struct dscm_monitor_v1_listener dscm_monitor_listener = {
 	.frame = dscm_monitor_frame,
 };
 
-/* include guile config parameters */
 #include "dscm/utils.h"
 #include "dscm/config.h"
 #include "dscm/bindings.h"
 
-/* function implementations */
 int
-allocate_shm_file(size_t size)
+createbuffer(size_t size)
 {
 	/* Shared memory support function adapted from [wayland-book] */
 	int fd = memfd_create("surface", MFD_CLOEXEC);
@@ -230,228 +222,19 @@ createmon(struct wl_output *output, uint32_t name)
 		selmon = m;
 	setupmon(m);
 }
-
 void
-drawbar(Monitor *m, enum align a)
-{
-	m->wl_buffer = draw_frame(m, a);
-	if (!m->wl_buffer)
-		return;
-	wl_surface_attach(m->wl_surface, m->wl_buffer, 0, 0);
-	wl_surface_damage_buffer(m->wl_surface, 0, 0, m->width, height);
-	wl_surface_commit(m->wl_surface);
-}
-
-void
-drawbars(enum align a)
-{
-	Monitor *m;
-	wl_list_for_each(m, &monitors, link)
-		drawbar(m, a);
-}
-
-void
-destroymon(Monitor *m)
-{
-	pixman_image_unref(m->leftlayer);
-	pixman_image_unref(m->centerlayer);
-	pixman_image_unref(m->rightlayer);
-	dscm_monitor_v1_destroy(m->dscm);
-	zwlr_layer_surface_v1_destroy(m->layer_surface);
-	wl_surface_destroy(m->wl_surface);
-	wl_list_remove(&m->link);
-}
-
-void
-drawtext(Monitor *m, enum align align)
-{
-	Block *b, *blocks;
-	char *p, *start, *end, *delimiter, *delimiterend;
-	int drawdelim = 0, drawstop = 0;
-	pixman_color_t textbgcolor, textfgcolor;
-	pixman_image_t *fgfill, *bglayer, *fglayer, *dest;
-	uint32_t yoffset, heightoffset, codepoint, ypos, xdraw,
-		prevxpos = 0, xpos = 0, lastcp = 0, state = UTF8_ACCEPT,
-		contentwidth = m->width - padleft - padright;
-
-	/* Render the appropriate blocks based on alignment. */
-	if (align == ALIGN_L) {
-		dest = m->leftlayer;
-		blocks = leftblocks;
-		delimiter = delimiterl;
-		delimiterend = delimiterlend;
-	} else if (align == ALIGN_C) {
-		dest = m->centerlayer;
-		blocks = centerblocks;
-		delimiter = delimiterc;
-		delimiterend = delimitercend;
-	} else if (align == ALIGN_R) {
-		dest = m->rightlayer;
-		blocks = rightblocks;
-		delimiter = delimiterr;
-		delimiterend = delimiterrend;
-	}
-
-	/* Can this ever be NULL? */
-	if (!blocks)
-		return;
-
-	/* Create new buffer for blocks */
-	pixman_image_unref(dest);
-	dest = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-					contentwidth, height, NULL, m->stride);
-
-	/* Colors (premultiplied!) */
-	textbgcolor = bgcolor;
-	textfgcolor = fgcolor;
-
-	fgfill = pixman_image_create_solid_fill(&textfgcolor);
-	bglayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-					   contentwidth, height, NULL, m->stride);
-	fglayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-					   contentwidth, height, NULL, m->stride);
-
-	yoffset = isbottom ? borderpx : 0;
-	heightoffset = isbottom ? 0 : borderpx;
-	ypos = (height + heightoffset + font->ascent - font->descent) / 2;
-
-	for (b = blocks; b->render && !drawstop;) {
-		if (drawdelim) {
-			start = delimiter;
-			end = delimiterend;
-		} else {
-			b->ca.fromx = xpos;
-			start = b->text;
-			end = start + b->length;
-		}
-		for (p = start; p != end; p++) {
-			/* Stop drawing when exceeding the monitor width. */
-			if (xpos >= contentwidth) {
-				drawstop = 1;
-				break;
-			}
-
-			/* Check for inline ^ commands */
-			if (!drawdelim && state == UTF8_ACCEPT && *p == '^') {
-				p++;
-				if (*p != '^') {
-					prevxpos = xpos;
-					p = handle_cmd(p, m, &textbgcolor,
-						       &textfgcolor, &xpos, &ypos);
-					pixman_image_unref(fgfill);
-					fgfill = pixman_image_create_solid_fill(
-						&textfgcolor);
-					if (prevxpos != xpos && textbgcolor.alpha != 0x0000)
-						pixman_image_fill_boxes(
-							PIXMAN_OP_OVER, bglayer,
-							&textbgcolor, 1, &(pixman_box32_t){
-								.x1 = prevxpos,
-								.x2 = MIN(xpos, contentwidth),
-								.y1 = yoffset,
-								.y2 = height - heightoffset,
-							});
-					continue;
-				}
-			}
-			/* Returns nonzero if more bytes are needed */
-			if (utf8decode(&state, &codepoint, *p))
-				continue;
-
-			/* Turn off subpixel rendering, which complicates things when
-			 * mixed with alpha channels */
-			const struct fcft_glyph *glyph = fcft_rasterize_char_utf32(
-				font, codepoint, FCFT_SUBPIXEL_NONE);
-			if (!glyph)
-				continue;
-
-			/* Adjust x position based on kerning with previous glyph */
-			long x_kern = 0;
-			if (lastcp)
-				fcft_kerning(font, lastcp, codepoint, &x_kern, NULL);
-			xpos += x_kern;
-			lastcp = codepoint;
-
-			/* Detect and handle pre-rendered glyphs (e.g. emoji) */
-			if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) {
-				/* Only the alpha channel of the mask is used, so we can
-				 * use fgfill here to blend prerendered glyphs with the
-				 * same opacity */
-				pixman_image_composite32(
-					PIXMAN_OP_OVER, glyph->pix, fgfill, fglayer,
-					0, 0, 0, 0, xpos + glyph->x, ypos - glyph->y,
-					glyph->width, glyph->height);
-			} else {
-				/* Applying the foreground color here would mess up
-				 * component alphas for subpixel-rendered text, so we
-				 * apply it when blending. */
-				pixman_image_composite32(
-					PIXMAN_OP_OVER, fgfill, glyph->pix, fglayer,
-					0, 0, 0, 0, xpos + glyph->x, ypos - glyph->y,
-					glyph->width, glyph->height);
-			}
-			if (textbgcolor.alpha != 0x0000)
-				pixman_image_fill_boxes(
-					PIXMAN_OP_OVER, bglayer,
-					&textbgcolor, 1, &(pixman_box32_t){
-						.x1 = xpos,
-						.x2 = MIN(xpos + glyph->advance.x,
-							  contentwidth),
-						.y1 = yoffset,
-						.y2 = height - heightoffset,
-					});
-			xpos += glyph->advance.x;
-			ypos += glyph->advance.y;
-		}
-		if (drawdelim) {
-			drawdelim = 0;
-			xpos += spacing;
-		} else {
-			b->ca.tox = xpos;
-			b++;
-			if (b->render != NULL) {
-				xpos += spacing;
-				if (delimiter)
-					drawdelim = 1;
-				else
-					xpos += spacing;
-			}
-		}
-	}
-	pixman_image_unref(fgfill);
-
-	if (state != UTF8_ACCEPT)
-		fprintf(stderr, "malformed UTF-8 sequence\n");
-
-	if (align == ALIGN_L)
-		xdraw = 0;
-	else if (align == ALIGN_C)
-		m->centerxdraw = xdraw = (contentwidth - xpos) / 2;
-	else if (align == ALIGN_R)
-		m->rightxdraw = xdraw = contentwidth - xpos;
-
-	pixman_image_composite32(PIXMAN_OP_OVER, bglayer, NULL, dest, 0, 0, 0, 0,
-				 xdraw, 0, xpos, height);
-	pixman_image_composite32(PIXMAN_OP_OVER, fglayer, NULL, dest, 0, 0, 0, 0,
-				 xdraw, 0, xpos, height);
-
-	pixman_image_unref(bglayer);
-	pixman_image_unref(fglayer);
-}
-
-struct wl_buffer *
-draw_frame(Monitor *m, enum align a)
+drawbar(Monitor *m)
 {
 	/* Allocate buffer to be attached to the surface */
-	int fd = allocate_shm_file(m->bufsize);
+	int fd = createbuffer(m->bufsize);
 	if (fd == -1 || !m || m->bufsize == 0)
-		return NULL;
+		return;
 
-	uint32_t *data = mmap(NULL, m->bufsize,
-			      PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	uint32_t *data = mmap(NULL, m->bufsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	if (data == MAP_FAILED) {
 		close(fd);
 		printf("could not allocate: %d, %d\n", errno, m->bufsize);
-		return NULL;
+		return;
 	}
 
 	struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, m->bufsize);
@@ -462,40 +245,213 @@ draw_frame(Monitor *m, enum align a)
 	close(fd);
 
 	/* Pixman image corresponding to main buffer */
-	pixman_image_t *bar = pixman_image_create_bits(
-		PIXMAN_a8r8g8b8, m->width, height, data, m->stride);
+	pixman_image_t *final = pixman_image_create_bits(
+		PIXMAN_a8r8g8b8, m->width, height, data, m->width * 4);
 
-	/* How should this work when there is three different "bars"? */
-	if (!adjustwidth)
-		pixman_image_fill_boxes(PIXMAN_OP_SRC, bar, &bgcolor, 1,
-					&(pixman_box32_t) {
-						.x1 = 0,
-						.x2 = m->width,
-						.y1 = 0,
-						.y2 = height
-					});
-	if (a & ALIGN_L)
-		drawtext(m, ALIGN_L);
-	if (a & ALIGN_C)
-		drawtext(m, ALIGN_C);
-	if (a & ALIGN_R) {
-		drawtext(m, ALIGN_R);
-	}
+	/* Text background and foreground layers */
+	pixman_image_t *fg = pixman_image_create_bits(
+		PIXMAN_a8r8g8b8, m->width, height, NULL, m->width * 4);
+	pixman_image_t *bg = pixman_image_create_bits(
+		PIXMAN_a8r8g8b8, m->width, height, NULL, m->width * 4);
 
-	/* How should we handle overflows? Configurable render order? */
-	pixman_image_composite32(PIXMAN_OP_OVER, m->leftlayer, NULL, bar, 0, 0, 0, 0,
-				 padleft, 0, m->width - padright, height);
-	pixman_image_composite32(PIXMAN_OP_OVER, m->rightlayer, NULL, bar, 0, 0, 0, 0,
-				 padleft, 0, m->width - padright, height);
-	pixman_image_composite32(PIXMAN_OP_OVER, m->centerlayer, NULL, bar, 0, 0, 0, 0,
-				 padleft, 0, m->width - padright, height);
-	pixman_image_unref(bar);
+	/* Draw background and foreground on bar */
+	pixman_image_composite32(
+		PIXMAN_OP_OVER, bg, NULL, final, 0, 0, 0, 0, 0, 0, m->width, height);
+	pixman_image_composite32(
+		PIXMAN_OP_OVER, fg, NULL, final, 0, 0, 0, 0, 0, 0, m->width, height);
+
+	pixman_image_unref(fg);
+	pixman_image_unref(bg);
+	pixman_image_unref(final);
+
 	munmap(data, m->bufsize);
-	return buffer;
+
+	wl_surface_attach(m->wl_surface, buffer, 0, 0);
+	wl_surface_damage_buffer(m->wl_surface, 0, 0, m->width, height);
+	wl_surface_commit(m->wl_surface);
+
+	return;
 }
 
 void
-event_loop(void)
+drawbars()
+{
+	Monitor *m;
+	wl_list_for_each(m, &monitors, link)
+		drawbar(m);
+}
+
+void
+destroymon(Monitor *m)
+{
+	dscm_monitor_v1_destroy(m->dscm);
+	zwlr_layer_surface_v1_destroy(m->layer_surface);
+	wl_surface_destroy(m->wl_surface);
+	wl_list_remove(&m->link);
+}
+
+void
+drawtext(Monitor *m)
+{
+	/* Block *b, *blocks; */
+	/* char *p, *start, *end, *delimiter, *delimiterend; */
+	/* int drawdelim = 0, drawstop = 0; */
+	/* pixman_color_t textbgcolor, textfgcolor; */
+	/* pixman_image_t *fgfill, *bglayer, *fglayer, *dest; */
+	/* uint32_t yoffset, heightoffset, codepoint, ypos, xdraw, */
+	/*	prevxpos = 0, xpos = 0, lastcp = 0, state = UTF8_ACCEPT, */
+	/*	contentwidth = m->width - padleft - padright; */
+
+	/* /\* Create new buffer for blocks *\/ */
+	/* dest = pixman_image_create_bits(PIXMAN_a8r8g8b8, */
+	/*				contentwidth, height, NULL, m->stride); */
+
+	/* /\* Colors (premultiplied!) *\/ */
+	/* textbgcolor = bgcolor; */
+	/* textfgcolor = fgcolor; */
+
+	/* fgfill = pixman_image_create_solid_fill(&textfgcolor); */
+	/* bglayer = pixman_image_create_bits(PIXMAN_a8r8g8b8, */
+	/*				   contentwidth, height, NULL, m->stride); */
+	/* fglayer = pixman_image_create_bits(PIXMAN_a8r8g8b8, */
+	/*				   contentwidth, height, NULL, m->stride); */
+
+	/* yoffset = isbottom ? borderpx : 0; */
+	/* heightoffset = isbottom ? 0 : borderpx; */
+	/* ypos = (height + heightoffset + font->ascent - font->descent) / 2; */
+
+	/* for (b = blocks; b->render && !drawstop;) { */
+	/*	if (drawdelim) { */
+	/*		start = delimiter; */
+	/*		end = delimiterend; */
+	/*	} else { */
+	/*		b->ca.fromx = xpos; */
+	/*		start = b->text; */
+	/*		end = start + b->length; */
+	/*	} */
+	/*	for (p = start; p != end; p++) { */
+	/*		/\* Stop drawing when exceeding the monitor width. *\/ */
+	/*		if (xpos >= contentwidth) { */
+	/*			drawstop = 1; */
+	/*			break; */
+	/*		} */
+
+	/*		/\* Check for inline ^ commands *\/ */
+	/*		if (!drawdelim && state == UTF8_ACCEPT && *p == '^') { */
+	/*			p++; */
+	/*			if (*p != '^') { */
+	/*				prevxpos = xpos; */
+	/*				p = handle_cmd(p, m, &textbgcolor, */
+	/*					       &textfgcolor, &xpos, &ypos); */
+	/*				pixman_image_unref(fgfill); */
+	/*				fgfill = pixman_image_create_solid_fill( */
+	/*					&textfgcolor); */
+	/*				if (prevxpos != xpos && textbgcolor.alpha != 0x0000) */
+	/*					pixman_image_fill_boxes( */
+	/*						PIXMAN_OP_OVER, bglayer, */
+	/*						&textbgcolor, 1, &(pixman_box32_t){ */
+	/*							.x1 = prevxpos, */
+	/*							.x2 = MIN(xpos, contentwidth), */
+	/*							.y1 = yoffset, */
+	/*							.y2 = height - heightoffset, */
+	/*						}); */
+	/*				continue; */
+	/*			} */
+	/*		} */
+	/*		/\* Returns nonzero if more bytes are needed *\/ */
+	/*		if (utf8decode(&state, &codepoint, *p)) */
+	/*			continue; */
+
+	/*		/\* Turn off subpixel rendering, which complicates things when */
+	/*		 * mixed with alpha channels *\/ */
+	/*		const struct fcft_glyph *glyph = fcft_rasterize_char_utf32( */
+	/*			font, codepoint, FCFT_SUBPIXEL_NONE); */
+	/*		if (!glyph) */
+	/*			continue; */
+
+	/*		/\* Adjust x position based on kerning with previous glyph *\/ */
+	/*		long x_kern = 0; */
+	/*		if (lastcp) */
+	/*			fcft_kerning(font, lastcp, codepoint, &x_kern, NULL); */
+	/*		xpos += x_kern; */
+	/*		lastcp = codepoint; */
+
+	/*		/\* Detect and handle pre-rendered glyphs (e.g. emoji) *\/ */
+	/*		if (pixman_image_get_format(glyph->pix) == PIXMAN_a8r8g8b8) { */
+	/*			/\* Only the alpha channel of the mask is used, so we can */
+	/*			 * use fgfill here to blend prerendered glyphs with the */
+	/*			 * same opacity *\/ */
+	/*			pixman_image_composite32( */
+	/*				PIXMAN_OP_OVER, glyph->pix, fgfill, fglayer, */
+	/*				0, 0, 0, 0, xpos + glyph->x, ypos - glyph->y, */
+	/*				glyph->width, glyph->height); */
+	/*		} else { */
+	/*			/\* Applying the foreground color here would mess up */
+	/*			 * component alphas for subpixel-rendered text, so we */
+	/*			 * apply it when blending. *\/ */
+	/*			pixman_image_composite32( */
+	/*				PIXMAN_OP_OVER, fgfill, glyph->pix, fglayer, */
+	/*				0, 0, 0, 0, xpos + glyph->x, ypos - glyph->y, */
+	/*				glyph->width, glyph->height); */
+	/*		} */
+	/*		if (textbgcolor.alpha != 0x0000) */
+	/*			pixman_image_fill_boxes( */
+	/*				PIXMAN_OP_OVER, bglayer, */
+	/*				&textbgcolor, 1, &(pixman_box32_t){ */
+	/*					.x1 = xpos, */
+	/*					.x2 = MIN(xpos + glyph->advance.x, */
+	/*						  contentwidth), */
+	/*					.y1 = yoffset, */
+	/*					.y2 = height - heightoffset, */
+	/*				}); */
+	/*		xpos += glyph->advance.x; */
+	/*		ypos += glyph->advance.y; */
+	/*	} */
+	/*	if (drawdelim) { */
+	/*		drawdelim = 0; */
+	/*		xpos += spacing; */
+	/*	} else { */
+	/*		b->ca.tox = xpos; */
+	/*		b++; */
+	/*		if (b->render != NULL) { */
+	/*			xpos += spacing; */
+	/*			if (delimiter) */
+	/*				drawdelim = 1; */
+	/*			else */
+	/*				xpos += spacing; */
+	/*		} */
+	/*	} */
+	/* } */
+	/* pixman_image_unref(fgfill); */
+
+	/* if (state != UTF8_ACCEPT) */
+	/*	fprintf(stderr, "malformed UTF-8 sequence\n"); */
+
+	/* if (align == ALIGN_L) */
+	/*	xdraw = 0; */
+	/* else if (align == ALIGN_C) */
+	/*	m->centerxdraw = xdraw = (contentwidth - xpos) / 2; */
+	/* else if (align == ALIGN_R) */
+	/*	m->rightxdraw = xdraw = contentwidth - xpos; */
+
+	/* pixman_image_composite32(PIXMAN_OP_OVER, bglayer, NULL, dest, 0, 0, 0, 0, */
+	/*			 xdraw, 0, xpos, height); */
+	/* pixman_image_composite32(PIXMAN_OP_OVER, fglayer, NULL, dest, 0, 0, 0, 0, */
+	/*			 xdraw, 0, xpos, height); */
+
+	/* pixman_image_unref(bglayer); */
+	/* pixman_image_unref(fglayer); */
+}
+
+void
+drawgroups(Monitor *m)
+{
+	/* TODO */
+	/* drawtext(m); */
+}
+
+void
+eventloop(void)
 {
 	char dummy[8];
 	struct itimerspec spec;
@@ -509,7 +465,7 @@ event_loop(void)
 		EBARF("timerfd_settime");
 
 	/* initial draw */
-	updatestatus(0);
+	updatebars(0);
 
 	for (unsigned int i = 1; running; i++) {
 		fd_set rfds;
@@ -525,7 +481,7 @@ event_loop(void)
 			EBARF("select");
 
 		if (FD_ISSET(tfd, &rfds)) {
-			updatestatus(i);
+			updatebars(i);
 			read(tfd, dummy, 8);
 		}
 
@@ -630,17 +586,9 @@ layer_surface_configure(void *data,
 	m->width = w;
 	m->stride = m->width * 4;
 	m->bufsize = m->stride * height;
-	m->leftlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-						m->width, height, NULL, m->stride);
-	m->centerlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-						  m->width, height, NULL, m->stride);
-	m->rightlayer = pixman_image_create_bits(PIXMAN_a8r8g8b8,
-						 m->width, height, NULL, m->stride);
-	if (exclusive > 0)
-		exclusive = height;
-	zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, exclusive);
+	zwlr_layer_surface_v1_set_exclusive_zone(m->layer_surface, height);
 	zwlr_layer_surface_v1_ack_configure(surface, serial);
-	drawbar(m, ALIGN_L | ALIGN_C | ALIGN_R);
+	drawbar(m);
 }
 
 void
@@ -776,10 +724,6 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 		if (!b->click)
 			continue;
 		xoffset = padleft;
-		if (b->align == ALIGN_C)
-			xoffset += sel->centerxdraw;
-		else if (b->align == ALIGN_R)
-			xoffset += sel->rightxdraw;
 		if ((b->ca.fromx + xoffset) <= mousex &&
 		    (b->ca.tox + xoffset) >= mousex &&
 		    b->ca.fromy <= mousey && mousey <= b->ca.toy) {
@@ -850,10 +794,10 @@ setupmon(Monitor *m)
 }
 
 int
-updateblock(Block *b)
+updateblock(Monitor *m, Block *b)
 {
 	uint32_t prevlen = b->length;
-	SCM ret = dscm_safe_call_render(b->render, selmon);
+	SCM ret = dscm_safe_call_render(b->render, m);
 	if (!ret || !scm_is_string(ret))
 		return 0;
 	memcpy(b->prevtext, b->text, b->length);
@@ -864,37 +808,35 @@ updateblock(Block *b)
 }
 
 int
-updateblocks(unsigned int i, Block *blocks)
+updateblocks(Monitor *m, unsigned int i)
 {
 	Block *b;
 	int dirty = 0;
-	for (b = blocks; b->render; b++)
+	wl_list_for_each(b, &blocks, link) {
+		if (!b->render)
+			continue;
 		if (i == 0 || (b->interval > 0 && i % b->interval == 0)
 		    || (unhandled && b->events))
-			if (updateblock(b) != 0)
+			if (updateblock(m, b) != 0)
 				dirty = 1;
+	}
 	return dirty;
 }
 
-/* TDOO: Status must be updated once for each monitor */
 void
-updatestatus(unsigned int i)
+updatebars(unsigned int i)
 {
-	enum align a = ALIGN_UNSET;
-	if (updateblocks(i, leftblocks) || i == 0)
-		a |= ALIGN_L;
-	if (updateblocks(i, centerblocks) || i == 0)
-		a |= ALIGN_C;
-	if (updateblocks(i, rightblocks) || i == 0)
-		a |= ALIGN_R;
-	if (a != ALIGN_UNSET)
-		drawbars(a);
+	Monitor *m;
+	wl_list_for_each(m, &monitors, link) {
+		if (updateblocks(m, i) || i == 0)
+			drawbar(m);
+	}
 	/* Mark all events has handled. */
 	unhandled = 0;
 }
 
 void
-wl_buffer_release(void *data, struct wl_buffer *wl_buffer)
+handle_buffer_release(void *data, struct wl_buffer *wl_buffer)
 {
 	/* Sent by the compositor when it's no longer using this buffer */
 	wl_buffer_destroy(wl_buffer);
@@ -969,7 +911,7 @@ void
 dscm_monitor_frame(void *data, struct dscm_monitor_v1 *mon)
 {
 	unhandled = 1;
-	updatestatus(-1);
+	updatebars(-1);
 }
 
 int
@@ -984,7 +926,7 @@ main(int argc, char **argv)
 		if (c == 'c')
 			configfile = optarg;
 		else if (c == 'v') {
-			fprintf(stderr, PROGRAM " " VERSION ", " COPYRIGHT "\n");
+			fprintf(stderr, PROGRAM " " VERSION "\n");
 			return 0;
 		} else
 			goto usage;
@@ -1037,7 +979,7 @@ main(int argc, char **argv)
 	if (!compositor || !shm || !layer_shell || !dscm)
 		BARF("compositor does not support all needed protocols");
 
-	event_loop();
+	eventloop();
 
 	/* Clean everything up */
 	wl_list_for_each(m, &monitors, link)
@@ -1054,5 +996,5 @@ main(int argc, char **argv)
 
 	return 0;
 usage:
-	BARF("Usage: %s [-c path to config.scm]", argv[0]);
+	BARF(USAGE, argv[0]);
 }

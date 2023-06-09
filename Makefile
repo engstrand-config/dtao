@@ -10,7 +10,8 @@ clean:
 	$(RM) $(BINS) $(addsuffix .o,$(BINS))
 
 install: all
-	install -D -t $(PREFIX)/bin $(BINS)
+	mv dtao dtao-guile
+	install -Dm755 dtao-guile $(PREFIX)/bin/dtao-guile
 	install -Dm644 -t $(PREFIX)/share/man/man1 $(MANS)
 	cp -r share $(PREFIX)/share/dtao-guile
 

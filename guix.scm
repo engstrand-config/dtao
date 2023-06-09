@@ -43,13 +43,12 @@
       (modify-phases
        %standard-phases
        (delete 'configure)
-       (replace 'install
-                (lambda* (#:key inputs outputs #:allow-other-keys)
-                  (let ((bin (string-append (assoc-ref outputs "out") "/bin")))
-                    (install-file "dtao" bin)
-                    (rename-file (string-append bin "/dtao")
-                                 (string-append bin "/dtao-guile-devel"))
-                    #t))))))
+       (add-after 'install 'rename-dtao-guile-to-dtao-guile-devel
+                  (lambda* (#:key inputs outputs #:allow-other-keys)
+                    (let ((bin (string-append (assoc-ref outputs "out") "/bin")))
+                      (rename-file (string-append bin "/dtao-guile")
+                                   (string-append bin "/dtao-guile-devel"))
+                      #t))))))
   (license (list license:gpl3+ license:expat license:cc0))
   (synopsis "dtao-guile - bar for Wayland using Guile")
   (description "dtao-guile is a Wayland bar that is fully configured

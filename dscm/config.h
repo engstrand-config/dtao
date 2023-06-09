@@ -33,7 +33,6 @@ static unsigned int firstload = 1;
 static char *fontstr           = "";
 static uint32_t height         = 0;
 static uint32_t updateinterval = 1;
-static uint32_t spacing        = 10;
 static uint32_t padtop         = 0;
 static uint32_t padbottom      = 0;
 static uint32_t padleft        = 0;
