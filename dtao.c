@@ -91,7 +91,7 @@ static struct wl_compositor *compositor;
 static struct wl_seat *seat = NULL;
 static struct wl_shm *shm;
 static struct wl_surface *activesurface;
-static struct wl_list monitors, cas;
+static struct wl_list monitors;
 
 static Monitor *selmon;
 static char *namespace = "dtao-guile";
@@ -771,7 +771,10 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 			sel = m;
 	if (!sel)
 		return;
-	wl_list_for_each(b, &cas, link) {
+	wl_list_for_each(b, &blocks, link) {
+		/* Skip blocks that does not have a registered click handler. */
+		if (!b->click)
+			continue;
 		xoffset = padleft;
 		if (b->align == ALIGN_C)
 			xoffset += sel->centerxdraw;
@@ -991,7 +994,6 @@ main(int argc, char **argv)
 	if (!configfile)
 		BARF("error: config path must be set using '-c'");
 
-	wl_list_init(&cas);
 	wl_list_init(&monitors);
 
 	/* Load guile config */
@@ -1017,10 +1019,10 @@ main(int argc, char **argv)
 
 	/* Set layer size and positioning */
 	if (!height)
-		height = font->height + font->descent + borderpx + padbottom + padtop;
+		height = font->height + font->descent + padbottom + padtop;
 
 	/* Register mouse clicks for all vertical space of bar */
-	wl_list_for_each(b, &cas, link)
+	wl_list_for_each(b, &blocks, link)
 		b->ca.toy = height;
 
 	/* Set up display and protocols */
