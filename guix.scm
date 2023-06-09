@@ -38,7 +38,8 @@
       #:make-flags
       (list
         (string-append "CC=" ,(cc-for-target))
-        (string-append "PREFIX=" (assoc-ref %outputs "out")))
+        (string-append "PREFIX=" (assoc-ref %outputs "out"))
+        "DEBUGFLAGS=-DDEVELOP")
       #:phases
       (modify-phases
        %standard-phases

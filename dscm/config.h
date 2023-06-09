@@ -1,5 +1,11 @@
 #pragma once
 
+#ifdef DEVELOP
+#define REPL_SOCKET_PATH "/tmp/dtao-guile-devel.socket"
+#else
+#define REPL_SOCKET_PATH "/tmp/dtao-guile.socket"
+#endif
+
 #define DSCM_DEFINE_P(CVAR, KEY, SETTER, RELOADER)			\
 	{								\
 		SCM m1 = scm_from_pointer(&(CVAR), NULL);		\
@@ -177,6 +183,8 @@ static inline void
 dscm_config_load(char *configfile)
 {
 	if (firstload) {
+		scm_c_define("dtao:%repl-socket-path",
+			     scm_from_locale_string(REPL_SOCKET_PATH));
 		scm_c_primitive_load(PREFIX "/share/dtao-guile/init.scm");
 		firstload = 0;
 	}

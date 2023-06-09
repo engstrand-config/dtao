@@ -476,7 +476,8 @@ eventloop(void)
 		/* Does this need to be inside the loop? */
 		wl_display_flush(display);
 
-		ret = select(MAX(wlfd, tfd) + 1, &rfds, NULL, NULL, NULL);
+		/* Need to use scm_std_select in order for REPL to work */
+		ret = scm_std_select(MAX(wlfd, tfd) + 1, &rfds, NULL, NULL, NULL);
 		if (ret < 0)
 			EBARF("select");
 

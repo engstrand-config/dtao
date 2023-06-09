@@ -1,8 +1,9 @@
 BINS = dtao
 MANS = doc/dtao-guile.1
 
+DEBUGFLAGS =
 PREFIX ?= /usr/local
-CFLAGS += -Wall -Wextra -Wno-unused-parameter -g -DPREFIX=\"$(PREFIX)\"
+CFLAGS += -Wall -Wextra -Wno-unused-parameter -g -DPREFIX=\"$(PREFIX)\" $(DEBUGFLAGS)
 
 all: $(BINS) $(MANS)
 
