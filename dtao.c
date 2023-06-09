@@ -197,8 +197,8 @@ static const struct dscm_monitor_v1_listener dscm_monitor_listener = {
 
 /* include guile config parameters */
 #include "dscm/utils.h"
-#include "dscm/bindings.h"
 #include "dscm/config.h"
+#include "dscm/bindings.h"
 
 /* function implementations */
 int
@@ -771,7 +771,7 @@ pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 			sel = m;
 	if (!sel)
 		return;
-	wl_list_for_each(b, &cas, clink) {
+	wl_list_for_each(b, &cas, link) {
 		xoffset = padleft;
 		if (b->align == ALIGN_C)
 			xoffset += sel->centerxdraw;
@@ -997,7 +997,8 @@ main(int argc, char **argv)
 	/* Load guile config */
 	scm_init_guile();
 	dscm_register();
-	dscm_config_parse(configfile);
+	dscm_config_load(configfile);
+	dscm_config_initialize();
 
 	/* Prevent tags and layouts from being garbage collected. */
 	scm_gc_protect_object(layouts);
@@ -1019,7 +1020,7 @@ main(int argc, char **argv)
 		height = font->height + font->descent + borderpx + padbottom + padtop;
 
 	/* Register mouse clicks for all vertical space of bar */
-	wl_list_for_each(b, &cas, clink)
+	wl_list_for_each(b, &cas, link)
 		b->ca.toy = height;
 
 	/* Set up display and protocols */

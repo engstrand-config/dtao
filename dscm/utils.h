@@ -13,6 +13,12 @@
 	DSCM_ASSERT(PRED, SUBR ": Wrong type argument in position " ARG \
 		    " (expected " TYPE "): ~a", VALUE)
 
+#define DSCM_SET_REST(SUBR, REST, NUM)					\
+	int length = scm_to_int(scm_length(REST));			\
+	DSCM_ASSERT((length % NUM == 0),				\
+		    SUBR ": Invalid number of (rest) arguments: ~a", REST); \
+	for (int i = 0; i < length; i += NUM)
+
 typedef struct {
 	SCM proc;
 	uint32_t button;
@@ -20,6 +26,12 @@ typedef struct {
 
 typedef void(*dscm_reloader_t)();
 typedef void(*dscm_setter_t)(void*, SCM);
+
+static inline SCM
+dscm_list_ref(SCM list, int index)
+{
+	return scm_list_ref(list, scm_from_int(index));
+}
 
 static inline scm_t_bits *
 dscm_get_pointer(SCM proc)
@@ -86,4 +98,15 @@ dscm_safe_call_click(scm_t_bits *ptr, Monitor *m, uint32_t button)
 		BARF("dscm: could not call proc that is NULL");
 	dscm_call_data_t wrapper = {.proc = SCM_PACK_POINTER(ptr), .button = button};
 	return scm_c_with_continuation_barrier(&dscm_call_click_callback, &wrapper);
+}
+
+static inline Monitor*
+dscm_get_monitor_by_name(SCM monitor)
+{
+	Monitor *m = NULL;
+	uint32_t name = scm_to_uint32(monitor);
+	wl_list_for_each(m, &monitors, link)
+		if (m->name == name)
+			break;
+	return m;
 }

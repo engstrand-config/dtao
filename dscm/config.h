@@ -25,6 +25,9 @@
 
 static SCM metadata;
 
+/* Set to 0 after the initial config load */
+static unsigned int firstload = 1;
+
 /* Config variable definitions. */
 /* These will be automatically set from the guile config. */
 static char *fontstr           = "";
@@ -65,7 +68,7 @@ setter_int(void *cvar, SCM value)
 {
 	DSCM_ASSERT_TYPE(scm_is_integer(value),
 			 value, "set", DSCM_ARG2, "int");
-	(*((int*)cvar)) = scm_to_integer(value);
+	(*((int*)cvar)) = scm_to_int(value);
 }
 
 
@@ -82,7 +85,7 @@ setter_string(void *cvar, SCM value)
 {
 	DSCM_ASSERT_TYPE(scm_is_string(value),
 			 value, "set", DSCM_ARG2, "string");
-	((char*)cvar)) = scm_to_locale_string(value);
+	(*((char**)cvar)) = scm_to_locale_string(value);
 }
 
 static inline void
@@ -90,9 +93,9 @@ setter_color(void *cvar, SCM value)
 {
 	DSCM_ASSERT_TYPE(scm_is_string(value),
 			 value, "set", DSCM_ARG2, "string");
-	pixman_color_t *dest = cvar;
+	pixman_color_t **dest = cvar;
 	char *colorstr = scm_to_locale_string(value);
-	parse_color(dest, colorstr);
+	parse_color(colorstr, *dest);
 	free(colorstr);
 }
 
@@ -101,7 +104,7 @@ setter_renderer(void *cvar, SCM value)
 {
 	DSCM_ASSERT_TYPE((scm_is_true(scm_procedure_p(value))),
 			 value, "set", DSCM_ARG2, "procedure");
-	((scm_t_bits*)cvar) = dscm_get_pointer(value);
+	(*((scm_t_bits**)cvar)) = dscm_get_pointer(value);
 }
 
 static inline void
@@ -150,7 +153,7 @@ setter_block(void *cvar, SCM value)
 		b->signal = scm_to_int(signal);
 	}
 	if (!scm_is_false(events)) {
-		DSCM_ASSERT_TYPE(scm_is_boolean(events),
+		DSCM_ASSERT_TYPE(scm_is_bool(events),
 				 value, "define-block", "events", "bool");
 		b->events = scm_to_int(events);
 	}
@@ -174,14 +177,17 @@ setter_block(void *cvar, SCM value)
 static inline void
 dscm_config_load(char *configfile)
 {
-	scm_c_primitive_load(PREFIX "/share/dtao-guile/init.scm");
+	if (firstload) {
+		scm_c_primitive_load(PREFIX "/share/dtao-guile/init.scm");
+		firstload = 0;
+	}
 	scm_c_primitive_load(configfile);
 }
 
 static inline void
 dscm_config_initialize()
 {
-	wl_list_init(blocks);
+	wl_list_init(&blocks);
 
 	scm_permanent_object(metadata);
 	metadata = scm_make_hash_table(scm_from_int(20));
