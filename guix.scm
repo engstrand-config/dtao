@@ -22,7 +22,7 @@
 
 (package
   (name "dtao-guile-devel")
-  (version "0.1")
+  (version "1.0")
   (home-page "https://github.com/engstrand-config/dtao-guile")
   (source source)
   (build-system gnu-build-system)
@@ -46,8 +46,8 @@
        (replace 'install
                 (lambda* (#:key inputs outputs #:allow-other-keys)
                   (let ((bin (string-append (assoc-ref outputs "out") "/bin")))
-                    (install-file "dtao-guile" bin)
-                    (rename-file (string-append bin "/dtao-guile")
+                    (install-file "dtao" bin)
+                    (rename-file (string-append bin "/dtao")
                                  (string-append bin "/dtao-guile-devel"))
                     #t))))))
   (license (list license:gpl3+ license:expat license:cc0))

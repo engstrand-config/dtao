@@ -1,38 +1,46 @@
 #pragma once
 
+#define DSCM_ARG1 "1"
+#define DSCM_ARG2 "1"
+#define DSCM_ARG3 "1"
+#define DSCM_ARG4 "1"
+
+#define DSCM_ASSERT(PRED, MSG, ...)					\
+	if (!PRED) scm_misc_error(					\
+		"", MSG, scm_list_n(__VA_ARGS__, SCM_UNDEFINED))
+
+#define DSCM_ASSERT_TYPE(PRED, VALUE, SUBR, ARG, TYPE)			\
+	DSCM_ASSERT(PRED, SUBR ": Wrong type argument in position " ARG \
+		    " (expected " TYPE "): ~a", VALUE)
+
 typedef struct {
 	SCM proc;
 	uint32_t button;
 } dscm_call_data_t;
 
-static inline SCM
-dscm_get_variable(const char *name)
+typedef void(*dscm_reloader_t)();
+typedef void(*dscm_setter_t)(void*, SCM);
+
+static inline scm_t_bits *
+dscm_get_pointer(SCM proc)
 {
-	return scm_variable_ref(scm_c_lookup(name));
+	scm_gc_protect_object(proc);
+	return SCM_UNPACK_POINTER(proc);
 }
 
 static inline SCM
-dscm_alist_get(SCM alist, const char* key)
+dscm_assoc_ref(SCM alist, const char* symbol)
 {
-	return scm_assoc_ref(alist, scm_from_utf8_string(key));
+	return scm_assoc_ref(alist, scm_string_to_symbol(scm_from_locale_string(symbol)));
 }
 
 static inline char*
-dscm_alist_get_string(SCM alist, const char* key)
+dscm_assoc_ref_string(SCM alist, const char *symbol)
 {
-	SCM value = dscm_alist_get(alist, key);
+	SCM value = dscm_assoc_ref(alist, symbol);
 	if (scm_is_string(value))
 		return scm_to_locale_string(value);
 	return NULL;
-}
-
-static inline int
-dscm_alist_get_int(SCM alist, const char* key)
-{
-	SCM value = dscm_alist_get(alist, key);
-	if (scm_is_bool(value))
-		return scm_is_true(value) ? 1 : 0;
-	return scm_to_int(value);
 }
 
 static inline unsigned int
@@ -45,39 +53,6 @@ static inline SCM
 dscm_get_list_item(SCM list, unsigned int index)
 {
 	return scm_list_ref(list, scm_from_unsigned_integer(index));
-}
-
-static inline void *
-dscm_iterate_list(SCM list, size_t elem_size,
-		  void (*iterator)(unsigned int, SCM, void*, enum align a), enum align a)
-{
-	SCM item;
-	unsigned int i = 0, length = 0;
-	length = dscm_get_list_length(list);
-	void *allocated = calloc(length + 1, elem_size);
-	for (; i < length; i++) {
-		item = dscm_get_list_item(list, i);
-		(*iterator)(i, item, allocated, a);
-	}
-	return allocated;
-}
-
-static inline scm_t_bits *
-dscm_alist_get_proc_pointer(SCM alist, const char *key)
-{
-	scm_t_bits *proc = NULL;
-	SCM value = dscm_alist_get(alist, key);
-	if (scm_is_false(value))
-		return proc;
-	SCM eval = scm_primitive_eval(value);
-	/* SCM_UNPACK_POINTER is only allowed on expressions where SCM_IMP is 0 */
-	if (SCM_IMP(eval) == 1)
-		BARF("dscm: invalid callback procedure. SCM_IMP(proc) = 1");
-	if (scm_procedure_p(eval) == SCM_BOOL_T) {
-		proc = SCM_UNPACK_POINTER(eval);
-		scm_gc_protect_object(eval);
-	}
-	return proc;
 }
 
 static inline void *
@@ -95,19 +70,12 @@ dscm_call_click_callback(void *data)
 	return scm_call_1(wrapper->proc, button);
 }
 
-static inline void
-dscm_expose_monitor(Monitor *m)
-{
-	scm_c_define("dtao:active-monitor!", scm_from_pointer(m, NULL));
-}
-
 static inline SCM
 dscm_safe_call_render(scm_t_bits *ptr, Monitor *m)
 {
 	if (ptr == NULL)
 		BARF("dscm: could not call proc that is NULL");
 	dscm_call_data_t wrapper = {.proc = SCM_PACK_POINTER(ptr)};
-	dscm_expose_monitor(m);
 	return scm_c_with_continuation_barrier(&dscm_call_render_callback, &wrapper);
 }
 
@@ -117,6 +85,5 @@ dscm_safe_call_click(scm_t_bits *ptr, Monitor *m, uint32_t button)
 	if (ptr == NULL)
 		BARF("dscm: could not call proc that is NULL");
 	dscm_call_data_t wrapper = {.proc = SCM_PACK_POINTER(ptr), .button = button};
-	dscm_expose_monitor(m);
 	return scm_c_with_continuation_barrier(&dscm_call_click_callback, &wrapper);
 }

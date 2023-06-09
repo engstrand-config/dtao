@@ -7,25 +7,6 @@ dscm_enabled_in_tagset(SCM tag, uint32_t tagset)
 	if (tagset & (1 << index))
 		return SCM_BOOL_T;
 	return SCM_BOOL_F;
-
-}
-
-static inline Monitor *
-dscm_get_exposed_monitor()
-{
-	SCM monitor, ptr;
-	monitor = scm_c_lookup("dtao:active-monitor!");
-	ptr = scm_variable_ref(monitor);
-	return scm_to_pointer(ptr);
-}
-
-static inline SCM
-dscm_binding_selected_monitor()
-{
-	Monitor *m = dscm_get_exposed_monitor();
-	if (m && m == selmon)
-		return SCM_BOOL_T;
-	return SCM_BOOL_F;
 }
 
 static inline SCM
@@ -53,27 +34,6 @@ dscm_binding_selected_tag(SCM tag)
 	if (m && scm_to_int(tag) == m->seltag)
 		return SCM_BOOL_T;
 	return SCM_BOOL_F;
-}
-
-static inline SCM
-dscm_binding_title()
-{
-	Monitor *m = dscm_get_exposed_monitor();
-	if (m)
-		return scm_from_locale_string(m->title);
-	return scm_string(SCM_EOL);
-}
-
-static inline SCM
-dscm_binding_layout()
-{
-	Monitor *m = dscm_get_exposed_monitor();
-	if (!m || scm_is_null(layouts))
-		return scm_string(SCM_EOL);
-	SCM sel = scm_list_ref(layouts, scm_from_int(m->layout));
-	if (scm_is_null(sel))
-		return scm_string(SCM_EOL);
-	return sel;
 }
 
 static inline SCM
@@ -183,18 +143,12 @@ dscm_register()
 	scm_c_define("LAYER-TOP",
 		     scm_from_int(ZWLR_LAYER_SHELL_V1_LAYER_TOP));
 
-	scm_c_define_gsubr("dtao:selected-monitor?", 0, 0, 0,
-			   &dscm_binding_selected_monitor);
 	scm_c_define_gsubr("dtao:active-tag?", 1, 0, 0,
 			   &dscm_binding_active_tag);
 	scm_c_define_gsubr("dtao:urgent-tag?", 1, 0, 0,
 			   &dscm_binding_urgent_tag);
 	scm_c_define_gsubr("dtao:selected-tag?", 1, 0, 0,
 			   &dscm_binding_selected_tag);
-	scm_c_define_gsubr("dtao:title", 0, 0, 0,
-			   &dscm_binding_title);
-	scm_c_define_gsubr("dtao:layout", 0, 0, 0,
-			   &dscm_binding_layout);
 	scm_c_define_gsubr("dtao:view", 1, 0, 0,
 			   &dscm_binding_view);
 	scm_c_define_gsubr("dtao:toggle-view", 1, 0, 0,

@@ -35,6 +35,7 @@ static uint32_t padtop         = 0;
 static uint32_t padbottom      = 0;
 static uint32_t padleft        = 0;
 static uint32_t padright       = 0;
+static scm_t_bits *renderer    = NULL;
 static struct wl_list blocks;
 
 /* positioning */
@@ -62,7 +63,8 @@ static pixman_color_t fgcolor = {
 static inline void
 setter_int(void *cvar, SCM value)
 {
-	DSCM_ASSERT_TYPE(scm_is_integer(value), value, "set", DSCM_ARG2, "int");
+	DSCM_ASSERT_TYPE(scm_is_integer(value),
+			 value, "set", DSCM_ARG2, "int");
 	(*((int*)cvar)) = scm_to_integer(value);
 }
 
@@ -70,25 +72,103 @@ setter_int(void *cvar, SCM value)
 static inline void
 setter_uint32(void *cvar, SCM value)
 {
-	DSCM_ASSERT_TYPE(scm_is_integer(value), value, "set", DSCM_ARG2, "uint32");
+	DSCM_ASSERT_TYPE(scm_is_integer(value),
+			 value, "set", DSCM_ARG2, "uint32");
 	(*((uint32_t*)cvar)) = scm_to_uint32(value);
 }
 
 static inline void
 setter_string(void *cvar, SCM value)
 {
-	DSCM_ASSERT_TYPE(scm_is_string(value), value, "set", DSCM_ARG2, "string");
+	DSCM_ASSERT_TYPE(scm_is_string(value),
+			 value, "set", DSCM_ARG2, "string");
 	((char*)cvar)) = scm_to_locale_string(value);
 }
 
 static inline void
 setter_color(void *cvar, SCM value)
 {
-	DSCM_ASSERT_TYPE(scm_is_string(value), value, "set", DSCM_ARG2, "string");
+	DSCM_ASSERT_TYPE(scm_is_string(value),
+			 value, "set", DSCM_ARG2, "string");
 	pixman_color_t *dest = cvar;
 	char *colorstr = scm_to_locale_string(value);
 	parse_color(dest, colorstr);
 	free(colorstr);
+}
+
+static inline void
+setter_renderer(void *cvar, SCM value)
+{
+	DSCM_ASSERT_TYPE((scm_is_true(scm_procedure_p(value))),
+			 value, "set", DSCM_ARG2, "procedure");
+	((scm_t_bits*)cvar) = dscm_get_pointer(value);
+}
+
+static inline void
+setter_block(void *cvar, SCM value)
+{
+	DSCM_ASSERT_TYPE((scm_is_true(scm_list_p(value))),
+			 value, "set", DSCM_ARG2, "alist");
+
+	Block *b;
+	int found = 0;
+	struct wl_list *lst = cvar;
+
+	char *id = dscm_assoc_ref_string(value, "id");
+	DSCM_ASSERT(id, "Missing name of block: ~s", value);
+
+	wl_list_for_each(b, lst, link) {
+		if (!strcmp(b->id, id)) {
+			found = 1;
+			free(id);
+		}
+	}
+
+	SCM interval = dscm_assoc_ref(value, "interval");
+	SCM signal = dscm_assoc_ref(value, "signal");
+	SCM events = dscm_assoc_ref(value, "events?");
+	SCM render = dscm_assoc_ref(value, "render");
+	SCM click = dscm_assoc_ref(value, "click");
+
+	scm_dynwind_begin(0);
+
+	if (!found) {
+		b = calloc(1, sizeof(Block));
+		b->id = id;
+		scm_dynwind_unwind_handler(free, b, 0);
+		scm_dynwind_unwind_handler(free, id, 0);
+	}
+
+	if (!scm_is_false(interval)) {
+		DSCM_ASSERT_TYPE(scm_is_integer(interval),
+				 value, "define-block", "interval", "int");
+		b->interval = scm_to_int(interval);
+	}
+	if (!scm_is_false(signal)) {
+		DSCM_ASSERT_TYPE(scm_is_integer(interval),
+				 value, "define-block", "signal", "int");
+		b->signal = scm_to_int(signal);
+	}
+	if (!scm_is_false(events)) {
+		DSCM_ASSERT_TYPE(scm_is_boolean(events),
+				 value, "define-block", "events", "bool");
+		b->events = scm_to_int(events);
+	}
+	if (!scm_is_false(click)) {
+		DSCM_ASSERT_TYPE(scm_is_true(scm_procedure_p(click)),
+				 value, "define-block", "click", "procedure");
+		b->click = dscm_get_pointer(click);
+	}
+	if (!scm_is_false(render)) {
+		DSCM_ASSERT_TYPE(scm_is_true(scm_procedure_p(render)),
+				 value, "define-block", "render", "procedure");
+		b->render = dscm_get_pointer(render);
+	}
+
+	if (!found)
+		wl_list_insert(lst, &b->link);
+
+	scm_dynwind_end();
 }
 
 static inline void
@@ -119,6 +199,9 @@ dscm_config_initialize()
 	DSCM_DEFINE_P(fontstr, "font", &setter_string, NULL);
 	DSCM_DEFINE_P(bgcolor, "text-color", &setter_color, NULL);
 	DSCM_DEFINE_P(fgcolor, "background-color", &setter_color, NULL);
+
+	DSCM_DEFINE_P(blocks, "blocks", &setter_block, NULL);
+	DSCM_DEFINE_P(renderer, "renderer", &setter_renderer, NULL);
 }
 
 static inline void

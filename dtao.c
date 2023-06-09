@@ -65,29 +65,36 @@ typedef struct {
 } Monitor;
 
 typedef struct {
+	struct wl_list link;
 	enum align align;
-	struct wl_list clink;
-	scm_t_bits *render;
-	scm_t_bits *click;
+	uint8_t flex;
+	pixman_color_t *bg, *fg;
+	char delimiter[MAX_BLOCK_LEN];
+} BlockGroup;
+
+typedef struct {
+	struct wl_list link;
+	char *id;
 	char prevtext[MAX_BLOCK_LEN], text[MAX_BLOCK_LEN];
-	uint32_t signal, interval, events;
+	uint8_t signal, interval, events;
+	scm_t_bits *render, *click;
 	size_t length;
 	ClickableArea ca;
 } Block;
 
 /* variables */
+static struct dscm_v1 *dscm;
 static struct fcft_font *font;
+static struct zwlr_layer_shell_v1 *layer_shell;
 static struct wl_display *display;
 static struct wl_compositor *compositor;
 static struct wl_seat *seat = NULL;
 static struct wl_shm *shm;
-static struct zwlr_layer_shell_v1 *layer_shell;
-static struct dscm_v1 *dscm;
 static struct wl_surface *activesurface;
 static struct wl_list monitors, cas;
 
 static Monitor *selmon;
-static char *namespace = "dtao";
+static char *namespace = "dtao-guile";
 static bool running = true;
 static uint32_t savedx = 0, mousex = 0, mousey = 0,
 	unhandled = 0, TAGMASK = 0, numlayouts = 0;
