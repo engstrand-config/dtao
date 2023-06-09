@@ -123,7 +123,7 @@ setter_block(void *cvar, SCM value)
 	struct wl_list *lst = cvar;
 
 	char *id = dscm_assoc_ref_string(value, "id");
-	DSCM_ASSERT(id, "Missing name of block: ~s", value);
+	DSCM_ASSERT((id != NULL), "Missing id of block: ~s", value);
 
 	wl_list_for_each(b, lst, link) {
 		if (!strcmp(b->id, id)) {

@@ -1,3 +1,11 @@
+(use-modules (ice-9 exceptions))
+
+(define* (raise-error message)
+  "Raises an exception with message MESSAGE."
+  (raise-exception
+   (make-exception-with-message
+    (string-append "dtao: " message))))
+
 (define* (dtao:start-repl-server)
   "Starts a local Guile REPL server, listening on a UNIX socket at path
 @path{/tmp/dtao-guile.socket}. This REPL allows you to execute expressions
@@ -20,3 +28,29 @@ be started!"
 
   (kill-server)
   (spawn-server (make-unix-domain-server-socket #:path dtao:%repl-socket-path)))
+
+(define* (define-block id
+           #:key
+           (signal 0)
+           (interval 0)
+           (events? #f)
+           (render #f)
+           (click #f))
+  "Defines a new block that can be rendered via your
+renderer procedure. If a block with the same id already exists,
+the block will be updated with the new properties."
+  (when render
+    (unless (eq? (car (procedure-minimum-arity render)) 1)
+      (raise-error "render function expects one argument (monitor)")))
+
+  (when click
+    (unless (eq? (car (procedure-minimum-arity click)) 1)
+      (raise-error "click procedure expects one argument (monitor).")))
+
+  (set 'blocks
+       `((id . ,(format #f "~a" id))
+         (signal . ,signal)
+         (interval . ,interval)
+         (events? . ,events?)
+         (render . ,render)
+         (click . ,click))))
