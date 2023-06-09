@@ -21,9 +21,9 @@
               #:select? (git-predicate this-directory)))
 
 (package
-  (name "dtao-devel")
+  (name "dtao-guile-devel")
   (version "0.1")
-  (home-page "https://github.com/engstrand-config/dtao")
+  (home-page "https://github.com/engstrand-config/dtao-guile")
   (source source)
   (build-system gnu-build-system)
   (native-inputs (list pkg-config))
@@ -46,12 +46,11 @@
        (replace 'install
                 (lambda* (#:key inputs outputs #:allow-other-keys)
                   (let ((bin (string-append (assoc-ref outputs "out") "/bin")))
-                    (install-file "dtao" bin)
-                    (rename-file (string-append bin "/dtao")
+                    (install-file "dtao-guile" bin)
+                    (rename-file (string-append bin "/dtao-guile")
                                  (string-append bin "/dtao-guile-devel"))
                     #t))))))
   (license (list license:gpl3+ license:expat license:cc0))
-  (synopsis "dtao - dzen for Wayland")
-  (description
-    "dtao is a stdin-based general-purpose bar for Wayland,
-    modeled after the venerable dzen2"))
+  (synopsis "dtao-guile - bar for Wayland using Guile")
+  (description "dtao-guile is a Wayland bar that is fully configured
+in Guile, both general configuration, as well as blocks."))

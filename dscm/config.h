@@ -1,49 +1,50 @@
 #pragma once
 
-SCM config;
+#define DSCM_DEFINE_P(CVAR, KEY, SETTER, RELOADER)			\
+	{								\
+		SCM m1 = scm_from_pointer(&(CVAR), NULL);		\
+		SCM m2 = scm_from_pointer(SETTER, NULL);		\
+		SCM m3 = SCM_BOOL_F;					\
+		scm_gc_protect_object(m1);				\
+		scm_gc_protect_object(m2);				\
+		if (RELOADER != NULL) {					\
+			m3 = scm_from_pointer(RELOADER, NULL);		\
+			scm_gc_protect_object(m3);			\
+		}							\
+		scm_hash_set_x(						\
+			metadata,					\
+			scm_string_to_symbol(scm_from_locale_string(KEY)), \
+			scm_list_3(m1, m2, m3));			\
+	}
+
+#define DSCM_DEFINE(CVAR, KEY, DEFVAL, SETTER, RELOADER)	\
+	{							\
+		(CVAR) = DEFVAL;				\
+		DSCM_DEFINE_P(CVAR, KEY, SETTER, RELOADER);	\
+	}
+
+static SCM metadata;
 
 /* Config variable definitions. */
 /* These will be automatically set from the guile config. */
-static uint32_t height                  = 0;
-static int exclusive                    = -1;
-static int adjustwidth                  = 0;
-static int isbottom                     = 0;
-static int borderpx                     = 0;
-static char *fontstr                    = "";
-static int updateinterval               = 1;
-static char *delimiterl                 = NULL;
-static char *delimiterlend              = NULL;
-static char *delimiterc                 = NULL;
-static char *delimitercend              = NULL;
-static char *delimiterr                 = NULL;
-static char *delimiterrend              = NULL;
-static uint32_t spacing                 = 10;
-
-/* Bar padding */
-static int padtop                       = 0;
-static int padbottom                    = 0;
-static int padleft                      = 0;
-static int padright                     = 0;
+static char *fontstr           = "";
+static uint32_t height         = 0;
+static uint32_t updateinterval = 1;
+static uint32_t spacing        = 10;
+static uint32_t padtop         = 0;
+static uint32_t padbottom      = 0;
+static uint32_t padleft        = 0;
+static uint32_t padright       = 0;
+static struct wl_list blocks;
 
 /* positioning */
-static int layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;;
+static int layer = ZWLR_LAYER_SHELL_V1_LAYER_TOP;
 static int anchor = ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP
 	| ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT
 	| ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT;
 
-/* blocks */
-static Block *leftblocks                = NULL;
-static Block *centerblocks              = NULL;
-static Block *rightblocks               = NULL;
 
-/* default colors */
-static pixman_color_t bordercolor = {
-	.red = 0xffff,
-	.green = 0x0000,
-	.blue = 0x0000,
-	.alpha = 0xffff,
-};
-
+/* Default colors */
 static pixman_color_t bgcolor = {
 	.red = 0x1111,
 	.green = 0x1111,
@@ -59,88 +60,69 @@ static pixman_color_t fgcolor = {
 };
 
 static inline void
-dscm_parse_block(unsigned int index, SCM block, void *data, enum align a)
+setter_int(void *cvar, SCM value)
 {
-	Block *blocks = data;
-	scm_t_bits *click = dscm_alist_get_proc_pointer(block, "click");
+	DSCM_ASSERT_TYPE(scm_is_integer(value), value, "set", DSCM_ARG2, "int");
+	(*((int*)cvar)) = scm_to_integer(value);
+}
 
-	blocks[index] = (Block){
-		.align = a,
-		.signal = dscm_alist_get_int(block, "signal"),
-		.interval = dscm_alist_get_int(block, "interval"),
-		.render = dscm_alist_get_proc_pointer(block, "render"),
-		.events = dscm_alist_get_int(block, "events"),
-		.click = click,
-	};
 
-	/* TODO: Send the mouse button of the click event to the click handler */
-	if (click)
-		wl_list_insert(&cas, &blocks[index].clink);
+static inline void
+setter_uint32(void *cvar, SCM value)
+{
+	DSCM_ASSERT_TYPE(scm_is_integer(value), value, "set", DSCM_ARG2, "uint32");
+	(*((uint32_t*)cvar)) = scm_to_uint32(value);
 }
 
 static inline void
-dscm_config_parse(char *configfile)
+setter_string(void *cvar, SCM value)
 {
-	SCM eval, barlayer;
+	DSCM_ASSERT_TYPE(scm_is_string(value), value, "set", DSCM_ARG2, "string");
+	((char*)cvar)) = scm_to_locale_string(value);
+}
 
+static inline void
+setter_color(void *cvar, SCM value)
+{
+	DSCM_ASSERT_TYPE(scm_is_string(value), value, "set", DSCM_ARG2, "string");
+	pixman_color_t *dest = cvar;
+	char *colorstr = scm_to_locale_string(value);
+	parse_color(dest, colorstr);
+	free(colorstr);
+}
+
+static inline void
+dscm_config_load(char *configfile)
+{
+	scm_c_primitive_load(PREFIX "/share/dtao-guile/init.scm");
 	scm_c_primitive_load(configfile);
-	config = dscm_get_variable("config");
-	if (scm_is_null(config))
-		BARF("invalid config");
+}
 
-	fontstr = dscm_alist_get_string(config, "font");
-	height = dscm_alist_get_int(config, "height");
-	borderpx = dscm_alist_get_int(config, "border-px");
-	exclusive = dscm_alist_get_int(config, "exclusive");
-	isbottom = dscm_alist_get_int(config, "bottom");
-	adjustwidth = dscm_alist_get_int(config, "adjust-width");
-	delimiterl = dscm_alist_get_string(config, "delimiter-left");
-	delimiterc = dscm_alist_get_string(config, "delimiter-center");
-	delimiterr = dscm_alist_get_string(config, "delimiter-right");
-	spacing = dscm_alist_get_int(config, "block-spacing");
-	padtop = dscm_alist_get_int(config, "padding-top");
-	padbottom = dscm_alist_get_int(config, "padding-bottom");
-	padleft = dscm_alist_get_int(config, "padding-left");
-	padright = dscm_alist_get_int(config, "padding-right");
+static inline void
+dscm_config_initialize()
+{
+	wl_list_init(blocks);
 
-	if (delimiterl)
-		delimiterlend = delimiterl + strlen(delimiterl);
-	if (delimiterc)
-		delimitercend = delimiterc + strlen(delimiterc);
-	if (delimiterr)
-		delimiterrend = delimiterr + strlen(delimiterr);
-	if (isbottom)
-		anchor ^= ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
-			ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM;
+	scm_permanent_object(metadata);
+	metadata = scm_make_hash_table(scm_from_int(20));
 
-	char *bgstr, *fgstr, *borderstr;
-	bgstr = dscm_alist_get_string(config, "background-color");
-	fgstr = dscm_alist_get_string(config, "foreground-color");
-	borderstr = dscm_alist_get_string(config, "border-color");
-	parse_color(bgstr, &bgcolor);
-	parse_color(fgstr, &fgcolor);
-	parse_color(borderstr, &bordercolor);
-	free(bgstr);
-	free(fgstr);
-	free(borderstr);
+	DSCM_DEFINE(height, "height", 30, &setter_uint32, NULL);
+	DSCM_DEFINE(updateinterval, "update-interval", 1, &setter_uint32, NULL);
+	DSCM_DEFINE(padtop, "padding-top", 5, &setter_uint32, NULL);
+	DSCM_DEFINE(padbottom, "padding-bottom", 5, &setter_uint32, NULL);
+	DSCM_DEFINE(padleft, "padding-left", 5, &setter_uint32, NULL);
+	DSCM_DEFINE(padright, "padding-right", 5, &setter_uint32, NULL);
+	DSCM_DEFINE(padright, "padding-right", 5, &setter_uint32, NULL);
 
-	barlayer = dscm_alist_get(config, "layer");
-	eval = scm_primitive_eval(barlayer);
-	layer = scm_to_int(eval);
-
-	leftblocks = dscm_iterate_list(dscm_alist_get(config, "left-blocks"),
-				       sizeof(Block), &dscm_parse_block, ALIGN_L);
-	centerblocks = dscm_iterate_list(dscm_alist_get(config, "center-blocks"),
-					 sizeof(Block), &dscm_parse_block, ALIGN_C);
-	rightblocks = dscm_iterate_list(dscm_alist_get(config, "right-blocks"),
-					sizeof(Block), &dscm_parse_block, ALIGN_R);
+	DSCM_DEFINE_P(layer, "layer", &setter_int, NULL);
+	DSCM_DEFINE_P(anchor, "anchor", &setter_int, NULL);
+	DSCM_DEFINE_P(fontstr, "font", &setter_string, NULL);
+	DSCM_DEFINE_P(bgcolor, "text-color", &setter_color, NULL);
+	DSCM_DEFINE_P(fgcolor, "background-color", &setter_color, NULL);
 }
 
 static inline void
 dscm_config_cleanup()
 {
-	free(leftblocks);
-	free(centerblocks);
-	free(rightblocks);
 	free(fontstr);
 }

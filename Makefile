@@ -1,8 +1,8 @@
-BINS = dtao
-MANS = doc/dtao.1
+BINS = dtao-guile
+MANS = doc/dtao-guile.1
 
 PREFIX ?= /usr/local
-CFLAGS += -Wall -Wextra -Wno-unused-parameter -g
+CFLAGS += -Wall -Wextra -Wno-unused-parameter -g -DPREFIX=\"$(PREFIX)\"
 
 all: $(BINS) $(MANS)
 
@@ -12,6 +12,7 @@ clean:
 install: all
 	install -D -t $(PREFIX)/bin $(BINS)
 	install -Dm644 -t $(PREFIX)/share/man/man1 $(MANS)
+	cp -r share $(PREFIX)/share/dtao-guile
 
 $(MANS): %: %.ronn
 	ronn -r $<
